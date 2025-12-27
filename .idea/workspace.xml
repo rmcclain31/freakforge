@@ -1,13 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="First Comit">
-      <change afterPath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/public/athletes_sample_100.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/components/Dashboard/Dashboard.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/index.css" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/utils/dataService.js" afterDir="false" />
+    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="All updated files. Numerous changes. Want to establish a new context for a vibe-code session.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/package.json" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -81,7 +76,7 @@
       <option name="presentableId" value="Default" />
       <updated>1766616229934</updated>
       <workItem from="1766616230976" duration="8783000" />
-      <workItem from="1766723605532" duration="7698000" />
+      <workItem from="1766723605532" duration="8325000" />
     </task>
     <task id="LOCAL-00001" summary="First Comit">
       <option name="closed" value="true" />
@@ -91,7 +86,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766616524835</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="All updated files. Numerous changes. Want to establish a new context for a vibe-code session.">
+      <option name="closed" value="true" />
+      <created>1766802029990</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1766802029990</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -99,7 +102,8 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="First Comit" />
-    <option name="LAST_COMMIT_MESSAGE" value="First Comit" />
+    <MESSAGE value="All updated files. Numerous changes. Want to establish a new context for a vibe-code session." />
+    <option name="LAST_COMMIT_MESSAGE" value="All updated files. Numerous changes. Want to establish a new context for a vibe-code session." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/athletic_app$main.coverage" NAME="main Coverage Results" MODIFIED="1766715571495" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/athletic-metrics-analyzer/backend" />
