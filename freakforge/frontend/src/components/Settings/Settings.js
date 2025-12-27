@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 
 function Settings() {
+  // Default: time-based metrics are flipped so favorable (faster) times show as positive sigma
   const [settings, setSettings] = useState({
     greenIsGood: false,
     metricFlips: {
-      dash40: false,
-      proAgility: false,
-      lDrill: false,
+      dash40: true,       // Time metric - flip by default
+      proAgility: true,   // Time metric - flip by default
+      lDrill: true,       // Time metric - flip by default
       verticalJump: false,
       broadJump: false,
       height: false,
@@ -44,7 +45,6 @@ function Settings() {
       name: '40-Yard Dash',
       unit: 'sec',
       lowerIsBetter: true,
-      recommendFlip: true,
       description: 'Lower time is better (speed)'
     },
     {
@@ -52,7 +52,6 @@ function Settings() {
       name: 'Pro Agility',
       unit: 'sec',
       lowerIsBetter: true,
-      recommendFlip: true,
       description: 'Lower time is better (agility)'
     },
     {
@@ -60,7 +59,6 @@ function Settings() {
       name: 'L-Drill',
       unit: 'sec',
       lowerIsBetter: true,
-      recommendFlip: true,
       description: 'Lower time is better (agility)'
     },
     {
@@ -68,7 +66,6 @@ function Settings() {
       name: 'Vertical Jump',
       unit: 'in',
       lowerIsBetter: false,
-      recommendFlip: false,
       description: 'Higher is better (power)'
     },
     {
@@ -76,7 +73,6 @@ function Settings() {
       name: 'Broad Jump',
       unit: 'in',
       lowerIsBetter: false,
-      recommendFlip: false,
       description: 'Higher is better (power)'
     },
     {
@@ -84,7 +80,6 @@ function Settings() {
       name: 'Height',
       unit: 'in',
       lowerIsBetter: false,
-      recommendFlip: false,
       description: 'Context dependent'
     },
     {
@@ -92,28 +87,79 @@ function Settings() {
       name: 'Weight',
       unit: 'lbs',
       lowerIsBetter: false,
-      recommendFlip: false,
       description: 'Context dependent'
     }
   ];
 
-  const MetricCard = ({ metric }) => {
+  // Determine which column a metric belongs in based on flip state and natural direction
+  // Right column = favorable shows as positive sigma (right of center)
+  // Left column = favorable shows as negative sigma (left of center)
+  const isInRightColumn = (metric) => {
     const isFlipped = settings.metricFlips[metric.key];
-    const recommendedSetting = metric.recommendFlip ? 'Flip' : 'Raw';
-    const recommendationReason = metric.lowerIsBetter ? 'Lower' : 'Higher';
+    // Right column if: (lower is better AND flipped) OR (higher is better AND not flipped)
+    return (metric.lowerIsBetter && isFlipped) || (!metric.lowerIsBetter && !isFlipped);
+  };
+
+  // Check if metric is flipped to be in right column (special highlighting)
+  const isFlippedToRight = (metric) => {
+    const isFlipped = settings.metricFlips[metric.key];
+    return metric.lowerIsBetter && isFlipped;
+  };
+
+  const rightColumnMetrics = metrics.filter(m => isInRightColumn(m));
+  const leftColumnMetrics = metrics.filter(m => !isInRightColumn(m));
+
+  const MetricCard = ({ metric, isRightColumn }) => {
+    const isFlipped = settings.metricFlips[metric.key];
+    const isFlippedForRight = isFlippedToRight(metric);
+
+    // Colors: flipped time metrics get special amber/orange highlight
+    // Regular metrics get standard brown/orange theme
+    const cardBorderColor = isFlippedForRight ? '#f59e0b' : '#78350f';
+    const cardBackground = isFlippedForRight ? '#422006' : '#1e293b';
 
     return (
       <div style={{
-        background: '#1e293b',
+        background: cardBackground,
         padding: '1.25rem',
         borderRadius: '0.5rem',
-        borderLeft: `4px solid ${isFlipped ? '#f97316' : '#78350f'}`,
-        minWidth: '280px'
+        borderLeft: `4px solid ${cardBorderColor}`,
+        marginBottom: '1rem'
       }}>
         {/* Metric name and unit */}
         <div style={{ marginBottom: '1rem' }}>
-          <div style={{ fontSize: '1.1rem', fontWeight: '600', color: '#fbbf24', marginBottom: '0.25rem' }}>
+          <div style={{
+            fontSize: '1.1rem',
+            fontWeight: '600',
+            color: isFlippedForRight ? '#fbbf24' : '#fbbf24',
+            marginBottom: '0.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
             {metric.name}
+            {metric.lowerIsBetter && (
+              <span style={{
+                fontSize: '0.7rem',
+                padding: '0.15rem 0.4rem',
+                background: '#7c2d12',
+                borderRadius: '0.25rem',
+                color: '#fdba74'
+              }}>
+                TIME
+              </span>
+            )}
+            {isFlippedForRight && (
+              <span style={{
+                fontSize: '0.7rem',
+                padding: '0.15rem 0.4rem',
+                background: '#b45309',
+                borderRadius: '0.25rem',
+                color: '#fef3c7'
+              }}>
+                FLIPPED
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '0.85rem', color: '#a16207' }}>
             {metric.description} • Unit: {metric.unit}
@@ -124,7 +170,6 @@ function Settings() {
         <div style={{
           display: 'flex',
           gap: '1.5rem',
-          marginBottom: '1rem',
           padding: '0.75rem',
           background: '#0f172a',
           borderRadius: '0.375rem'
@@ -175,20 +220,6 @@ function Settings() {
             <span style={{ fontSize: '0.95rem' }}>Flip</span>
           </label>
         </div>
-
-        {/* Recommendation */}
-        <div style={{
-          padding: '0.75rem',
-          background: '#422006',
-          borderRadius: '0.375rem',
-          fontSize: '0.85rem',
-          color: '#fdba74',
-          borderLeft: '3px solid #ea580c'
-        }}>
-          <strong style={{ color: '#fb923c' }}>Recommend {recommendedSetting}:</strong>
-          <br />
-          {recommendationReason} metric value is better
-        </div>
       </div>
     );
   };
@@ -205,7 +236,7 @@ function Settings() {
         ⚙️ Metric Display Settings
       </h2>
       <p style={{ color: '#a16207', marginBottom: '2rem' }}>
-        Configure how sigma values are displayed. Metrics shown right of center indicate favorable performance as positive sigma.
+        Configure how sigma values are displayed on the bell curve. Metrics in the right column show favorable performance as positive sigma (+σ).
       </p>
 
       {/* Two-column layout with center bell curve */}
@@ -219,52 +250,59 @@ function Settings() {
           Metric Orientation
         </h3>
 
-        <div style={{ display: 'flex', gap: '3rem', alignItems: 'flex-start' }}>
-          {/* Left column - would be for left-oriented metrics (currently empty) */}
+        <div style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
+          {/* Left column - metrics showing favorable as negative σ */}
           <div style={{ flex: 1, minWidth: '0' }}>
             <div style={{
               fontSize: '0.95rem',
               fontWeight: '600',
-              color: '#a16207',
+              color: '#ef4444',
               marginBottom: '1rem',
               textAlign: 'center'
             }}>
-              Left of Center
+              ← Left of Center
               <div style={{ fontSize: '0.75rem', fontWeight: '400', marginTop: '0.25rem', color: '#78716c' }}>
-                (Favorable as negative σ)
+                (Favorable as −σ)
               </div>
             </div>
             <div style={{
-              display: 'grid',
-              gap: '1rem',
-              minHeight: '100px',
+              minHeight: '200px',
               padding: '1rem',
               background: '#0f172a',
               borderRadius: '0.375rem',
               border: '2px dashed #78350f'
             }}>
-              <div style={{
-                textAlign: 'center',
-                color: '#64748b',
-                fontSize: '0.85rem',
-                padding: '2rem'
-              }}>
-                No metrics configured
-              </div>
+              {leftColumnMetrics.length > 0 ? (
+                leftColumnMetrics.map(metric => (
+                  <MetricCard key={metric.key} metric={metric} isRightColumn={false} />
+                ))
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  color: '#64748b',
+                  fontSize: '0.85rem',
+                  padding: '3rem 1rem'
+                }}>
+                  No metrics configured for left side
+                  <div style={{ fontSize: '0.75rem', marginTop: '0.5rem', color: '#475569' }}>
+                    Select "Raw" on a time metric to move it here
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Center - Bell curve symbol */}
+          {/* Center - Bell curve visualization */}
           <div style={{
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
-            padding: '1rem'
+            justifyContent: 'flex-start',
+            paddingTop: '3rem'
           }}>
             <div style={{
-              width: '80px',
-              height: '120px',
+              width: '100px',
+              height: '180px',
               position: 'relative'
             }}>
               {/* Vertical center line */}
@@ -272,25 +310,48 @@ function Settings() {
                 position: 'absolute',
                 left: '50%',
                 top: '0',
-                bottom: '0',
+                bottom: '30px',
                 width: '3px',
                 background: '#ea580c',
                 transform: 'translateX(-50%)'
               }}></div>
 
-              {/* Bell curve symbol (simple triangle) */}
+              {/* Left arrow */}
+              <div style={{
+                position: 'absolute',
+                left: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                fontSize: '1.5rem',
+                color: '#ef4444'
+              }}>
+                ◀
+              </div>
+
+              {/* Right arrow */}
+              <div style={{
+                position: 'absolute',
+                right: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                fontSize: '1.5rem',
+                color: '#22c55e'
+              }}>
+                ▶
+              </div>
+
+              {/* Bell curve shape (simple) */}
               <div style={{
                 position: 'absolute',
                 left: '50%',
-                top: '30%',
+                top: '25%',
                 transform: 'translateX(-50%)',
-                fontSize: '4rem',
-                color: '#78350f',
-                lineHeight: '1',
-                userSelect: 'none'
-              }}>
-                ⟨⟩
-              </div>
+                width: '60px',
+                height: '40px',
+                borderRadius: '50% 50% 0 0',
+                border: '3px solid #78350f',
+                borderBottom: 'none'
+              }}></div>
 
               {/* Center label */}
               <div style={{
@@ -298,7 +359,7 @@ function Settings() {
                 left: '50%',
                 bottom: '0',
                 transform: 'translateX(-50%)',
-                fontSize: '0.85rem',
+                fontSize: '0.9rem',
                 fontWeight: '600',
                 color: '#fb923c',
                 whiteSpace: 'nowrap'
@@ -306,26 +367,79 @@ function Settings() {
                 0σ
               </div>
             </div>
+
+            {/* Legend */}
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.75rem',
+              background: '#422006',
+              borderRadius: '0.375rem',
+              fontSize: '0.75rem',
+              color: '#fdba74',
+              textAlign: 'center'
+            }}>
+              <div style={{ marginBottom: '0.5rem' }}>
+                <span style={{
+                  display: 'inline-block',
+                  width: '12px',
+                  height: '12px',
+                  background: '#b45309',
+                  borderRadius: '2px',
+                  marginRight: '0.5rem',
+                  verticalAlign: 'middle'
+                }}></span>
+                Flipped metric
+              </div>
+              <div>
+                <span style={{
+                  display: 'inline-block',
+                  width: '12px',
+                  height: '12px',
+                  background: '#78350f',
+                  borderRadius: '2px',
+                  marginRight: '0.5rem',
+                  verticalAlign: 'middle'
+                }}></span>
+                Raw metric
+              </div>
+            </div>
           </div>
 
-          {/* Right column - all favorable metrics */}
+          {/* Right column - metrics showing favorable as positive σ */}
           <div style={{ flex: 1, minWidth: '0' }}>
             <div style={{
               fontSize: '0.95rem',
               fontWeight: '600',
-              color: '#a16207',
+              color: '#22c55e',
               marginBottom: '1rem',
               textAlign: 'center'
             }}>
-              Right of Center
+              Right of Center →
               <div style={{ fontSize: '0.75rem', fontWeight: '400', marginTop: '0.25rem', color: '#78716c' }}>
-                (Favorable as positive σ)
+                (Favorable as +σ)
               </div>
             </div>
-            <div style={{ display: 'grid', gap: '1rem' }}>
-              {metrics.map(metric => (
-                <MetricCard key={metric.key} metric={metric} />
-              ))}
+            <div style={{
+              minHeight: '200px',
+              padding: '1rem',
+              background: '#0f172a',
+              borderRadius: '0.375rem',
+              border: '2px dashed #78350f'
+            }}>
+              {rightColumnMetrics.length > 0 ? (
+                rightColumnMetrics.map(metric => (
+                  <MetricCard key={metric.key} metric={metric} isRightColumn={true} />
+                ))
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  color: '#64748b',
+                  fontSize: '0.85rem',
+                  padding: '3rem 1rem'
+                }}>
+                  No metrics configured for right side
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -340,7 +454,13 @@ function Settings() {
           color: '#cbd5e1',
           borderLeft: '4px solid #ea580c'
         }}>
-          <strong style={{ color: '#fb923c' }}>💡 How it works:</strong> By default, all metrics are positioned right of center, meaning better performance shows as positive sigma (+σ). For time-based metrics where lower is better (40-yard dash, agility drills), select "Flip" to invert the display so faster times appear as positive sigma values.
+          <strong style={{ color: '#fb923c' }}>💡 How it works:</strong>
+          <ul style={{ marginTop: '0.5rem', marginBottom: 0, paddingLeft: '1.25rem', lineHeight: '1.6' }}>
+            <li><strong>Right column:</strong> Favorable performance appears as +σ (right of bell curve center)</li>
+            <li><strong>Left column:</strong> Favorable performance appears as −σ (left of bell curve center)</li>
+            <li><strong style={{ color: '#fbbf24' }}>Flipped</strong> time metrics (highlighted) have their sign inverted so faster times show as +σ</li>
+            <li>Toggle "Raw" on a time metric to see it graphed without inversion (moves to left column)</li>
+          </ul>
         </div>
       </div>
 
@@ -359,7 +479,7 @@ function Settings() {
         <div style={{ display: 'flex', gap: '1rem' }}>
           <button
             onClick={() => {
-              if (confirm('Reset all settings to defaults?')) {
+              if (window.confirm('Reset all settings to defaults?')) {
                 localStorage.removeItem('freakforgeSettings');
                 window.location.reload();
               }

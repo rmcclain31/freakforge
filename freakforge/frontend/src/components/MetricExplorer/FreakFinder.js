@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import dataService from '../../utils/dataService';
 import { exportAthleteToPDF } from '../../utils/pdfExport';
 import { useAppContext } from '../../context/AppContext';
@@ -12,26 +12,37 @@ const METRIC_EXPLANATIONS = {
   'lDrill': 'Measures ability to change direction while maintaining speed. Tests agility, balance, and flexibility in multiple planes of motion.',
   'height': 'Physical measurement affecting leverage, reach, and positional requirements. Advantages vary by position.',
   'weight': 'Indicates body mass and potential for power generation. Must be considered relative to other metrics for true athletic assessment.',
-  'verticaljump/weight': 'Power-to-weight ratio for vertical explosion. Higher values indicate exceptional explosive power relative to body mass. Elite athletes generate significant force despite their size.',
-  'broadjump/weight': 'Horizontal power-to-weight ratio. Measures ability to generate explosive horizontal force relative to body mass. Key indicator of acceleration potential.',
-  'weight/dash40': 'Speed-for-size metric. Higher values mean the athlete maintains good speed despite larger body mass. Valuable for power positions requiring speed.',
-  'broadjump/dash40': 'Combines explosive power with speed. High values indicate rare combination of acceleration and explosive strength. Often seen in elite skill position players.',
+  'verticaljump/weight': 'Power-to-weight ratio for vertical explosion. Higher values indicate exceptional explosive power relative to body mass.',
+  'broadjump/weight': 'Horizontal power-to-weight ratio. Measures ability to generate explosive horizontal force relative to body mass.',
+  'weight/dash40': 'Speed-for-size metric. Higher values mean the athlete maintains good speed despite larger body mass.',
+  'broadjump/dash40': 'Combines explosive power with speed. High values indicate rare combination of acceleration and explosive strength.',
   'verticaljump/dash40': 'Explosive power combined with speed. Athletes with high values possess rare combination of vertical explosion and linear speed.',
-  'broadjump/height': 'Explosive power normalized by height. Shows jumping ability relative to body length. High values indicate exceptional leg power for frame size.',
-  'height/weight': 'Body density indicator. Lower values suggest more compact, dense build. Higher values suggest leaner, longer frame. Context depends on position.'
+  'broadjump/height': 'Explosive power normalized by height. Shows jumping ability relative to body length.',
+  'height/weight': 'Body density indicator. Lower values suggest more compact, dense build. Higher values suggest leaner, longer frame.'
 };
+
+// Color palette for multi-athlete comparison
+const ATHLETE_COLORS = [
+  { fill: 'rgba(239, 68, 68, 1)', stroke: '#ffffff', name: 'Red' },
+  { fill: 'rgba(59, 130, 246, 1)', stroke: '#ffffff', name: 'Blue' },
+  { fill: 'rgba(16, 185, 129, 1)', stroke: '#ffffff', name: 'Green' },
+  { fill: 'rgba(245, 158, 11, 1)', stroke: '#ffffff', name: 'Amber' },
+  { fill: 'rgba(139, 92, 246, 1)', stroke: '#ffffff', name: 'Purple' },
+];
 
 function FreakFinder() {
   const [selectedAthlete, setSelectedAthlete] = useState(null);
   const [athletes, setAthletes] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [calculatedMetrics, setCalculatedMetrics] = useState([]);
-  const [selectedMetrics, setSelectedMetrics] = useState([]); // Track selected points
-  const [hoveredMetricInfo, setHoveredMetricInfo] = useState(null); // For legend
-  const [showExplanation, setShowExplanation] = useState(null);
+  const [selectedMetrics, setSelectedMetrics] = useState([]);
+  const [hoveredMetricInfo, setHoveredMetricInfo] = useState(null);
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [hoveredCardMetric, setHoveredCardMetric] = useState(null);
   const canvasRef = useRef(null);
   const { selectedAthletes, toggleAthleteSelection, clearSelectedAthletes, addForgedAxis, removeForgedAxis, forgedAxes } = useAppContext();
+
+  // Store jitter values per athlete-metric combination
+  const jitterMapRef = useRef(new Map());
 
   useEffect(() => {
     dataService.loadData().then(data => {
@@ -42,17 +53,14 @@ function FreakFinder() {
     });
   }, []);
 
-  useEffect(() => {
-    if (selectedAthlete) {
-      calculateAllMetrics();
+  // Get stable jitter for an athlete-metric combination
+  const getJitter = (athleteId, metricFormula) => {
+    const key = `${athleteId}-${metricFormula}`;
+    if (!jitterMapRef.current.has(key)) {
+      jitterMapRef.current.set(key, (Math.random() - 0.5) * 160);
     }
-  }, [selectedAthlete]);
-
-  useEffect(() => {
-    if (calculatedMetrics.length > 0 && canvasRef.current) {
-      drawBellCurve();
-    }
-  }, [calculatedMetrics, hoveredPoint, hoveredMetricInfo, selectedMetrics]);
+    return jitterMapRef.current.get(key);
+  };
 
   const getMetricUnits = (formula) => {
     const parts = formula.split(' / ');
@@ -164,7 +172,8 @@ function FreakFinder() {
           sigma: sigma,
           isStandard: true,
           metricKey: metric.key,
-          jitter: (Math.random() - 0.5) * 160  // Random y-offset, calculated once
+          athleteId: athlete.id,
+          jitter: getJitter(athlete.id, metric.name)
         });
       }
     });
@@ -197,15 +206,17 @@ function FreakFinder() {
 
             if (std > 0) {
               const sigma = (ratio - mean) / std;
+              const formula = `${numerator.name} / ${denominator.name}`;
 
               calculated.push({
-                formula: `${numerator.name} / ${denominator.name}`,
+                formula: formula,
                 value: ratio,
                 sigma: sigma,
                 isStandard: false,
                 numeratorKey: numerator.key,
                 denominatorKey: denominator.key,
-                jitter: (Math.random() - 0.5) * 160  // Random y-offset, calculated once
+                athleteId: athlete.id,
+                jitter: getJitter(athlete.id, formula)
               });
             }
           }
@@ -216,14 +227,19 @@ function FreakFinder() {
     return calculated;
   };
 
-  const calculateAllMetrics = () => {
-    if (!selectedAthlete) return;
+  // FEATURE #1: Only use checkbox selections for bell curve display
+  // Calculate metrics for all CHECKBOX-selected athletes only
+  const allAthletesMetrics = useMemo(() => {
+    const athletesToShow = selectedAthletes.length > 0
+      ? athletes.filter(a => selectedAthletes.includes(a.id))
+      : selectedAthlete ? [selectedAthlete] : [];
 
-    let calculated = calculateMetricsForAthlete(selectedAthlete);
-    calculated.sort((a, b) => Math.abs(b.sigma) - Math.abs(a.sigma));
-
-    setCalculatedMetrics(calculated);
-  };
+    return athletesToShow.map((athlete, index) => ({
+      athlete,
+      colorIndex: index % ATHLETE_COLORS.length,
+      metrics: calculateMetricsForAthlete(athlete)
+    }));
+  }, [selectedAthletes, selectedAthlete, athletes]);
 
   const mergeReciprocals = (metrics) => {
     const processed = [];
@@ -275,17 +291,31 @@ function FreakFinder() {
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, width, height);
 
-    // Draw bell curve CLIPPED at ±3 sigma
-    ctx.strokeStyle = '#78350f'; // Dark orange/brown for curve
+    const sigmaRange = 6;
+    const startX = width / 8;
+    const endX = width * 7 / 8;
+
+    // Draw vertical gridlines
+    for (let s = -3; s <= 3; s += 0.5) {
+      const x = width / 2 + (s * width / 8);
+      const isFullSigma = s % 1 === 0;
+
+      ctx.strokeStyle = isFullSigma ? 'rgba(120, 53, 15, 0.4)' : 'rgba(120, 53, 15, 0.2)';
+      ctx.lineWidth = isFullSigma ? 1 : 0.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x, 30);
+      ctx.lineTo(x, height * 0.75);
+      ctx.stroke();
+    }
+
+    // Draw bell curve
+    ctx.strokeStyle = '#78350f';
     ctx.lineWidth = 2;
     ctx.beginPath();
 
-    const sigmaRange = 6; // -3 to +3
-    const startX = width / 8; // Start at -3σ position
-    const endX = width * 7 / 8; // End at +3σ position
-
     for (let x = startX; x <= endX; x++) {
-      const sigma = ((x - startX) / (endX - startX)) * sigmaRange - 3; // -3 to +3
+      const sigma = ((x - startX) / (endX - startX)) * sigmaRange - 3;
       const y = height * 0.75 - (height * 0.5 * Math.exp(-(sigma * sigma) / 2));
 
       if (x === startX) {
@@ -297,10 +327,10 @@ function FreakFinder() {
     ctx.stroke();
 
     // Draw sigma markers
-    ctx.strokeStyle = '#451a03'; // Darker brown for grid
+    ctx.strokeStyle = '#451a03';
     ctx.lineWidth = 1;
     ctx.font = '12px sans-serif';
-    ctx.fillStyle = '#a16207'; // Amber for labels
+    ctx.fillStyle = '#a16207';
 
     for (let s = -3; s <= 3; s += 0.5) {
       const x = width / 2 + (s * width / 8);
@@ -318,7 +348,7 @@ function FreakFinder() {
     }
 
     // Draw center line
-    ctx.strokeStyle = '#ea580c'; // Bright orange for center
+    ctx.strokeStyle = '#ea580c';
     ctx.lineWidth = 2;
     ctx.setLineDash([5, 5]);
     ctx.beginPath();
@@ -329,63 +359,64 @@ function FreakFinder() {
 
     const baselineY = height * 0.5;
 
-    // Filter out reciprocals - only show one from each pair
-    const displayMetrics = mergeReciprocals(calculatedMetrics);
+    // Draw data points for each athlete
+    allAthletesMetrics.forEach(({ athlete, colorIndex, metrics }) => {
+      const displayMetrics = mergeReciprocals(metrics);
+      const colors = ATHLETE_COLORS[colorIndex];
 
-    displayMetrics.forEach((metric) => {
-      const sigma = Math.max(-4, Math.min(4, metric.sigma));
-      const x = width / 2 + (sigma * width / 8);
-      const y = baselineY + metric.jitter;  // Use stored jitter instead of recalculating
+      displayMetrics.forEach((metric) => {
+        const sigma = Math.max(-4, Math.min(4, metric.sigma));
+        const x = width / 2 + (sigma * width / 8);
+        const y = baselineY + metric.jitter;
 
-      // Check if this point is hovered
-      const isHovered = hoveredPoint &&
-                       Math.abs(hoveredPoint.x - x) < 1 &&
-                       Math.abs(hoveredPoint.y - y) < 1;
+        const isHovered = (hoveredPoint &&
+                         Math.abs(hoveredPoint.x - x) < 1 &&
+                         Math.abs(hoveredPoint.y - y) < 1) ||
+                         (hoveredCardMetric === metric.formula);
 
-      // Check if this point is selected
-      const isSelected = selectedMetrics.some(sm => sm.formula === metric.formula);
+        const isSelected = selectedMetrics.some(sm => sm.formula === metric.formula);
 
-      // Draw selection ring first (behind point)
-      if (isSelected) {
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(x, y, 8, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+        if (isSelected) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x, y, 8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
 
-      // Yellow for hovered, red for standard, orange for calculated
-      if (isHovered) {
-        ctx.fillStyle = '#fbbf24'; // Bright yellow
-        ctx.beginPath();
-        ctx.arc(x, y, 7, 0, Math.PI * 2); // Larger when hovered
-        ctx.fill();
-      } else {
-        ctx.fillStyle = metric.isStandard ? '#ef4444' : '#fb923c';
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
+        if (isHovered) {
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.arc(x, y, 7, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = colors.fill;
+          ctx.strokeStyle = colors.stroke;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
 
-      metric.x = x;
-      metric.y = y;
+        metric.x = x;
+        metric.y = y;
+      });
     });
 
-    // Draw legend in upper right if hovering
+    // Draw hover legend
     if (hoveredMetricInfo) {
       const legendX = width - 250;
       const legendY = 20;
       const legendWidth = 230;
       const legendHeight = 90;
 
-      // Background
       ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
       ctx.strokeStyle = '#ea580c';
       ctx.lineWidth = 2;
       ctx.fillRect(legendX, legendY, legendWidth, legendHeight);
       ctx.strokeRect(legendX, legendY, legendWidth, legendHeight);
 
-      // Labels and values
       ctx.font = 'bold 12px sans-serif';
       ctx.fillStyle = '#a16207';
       ctx.textAlign = 'left';
@@ -394,19 +425,16 @@ function FreakFinder() {
       const valueX = legendX + 80;
       let currentY = legendY + 25;
 
-      // Metric
       ctx.fillText('Metric:', labelX, currentY);
       ctx.fillStyle = '#fbbf24';
       ctx.fillText(hoveredMetricInfo.formula, valueX, currentY);
 
-      // Sigma
       currentY += 25;
       ctx.fillStyle = '#a16207';
       ctx.fillText('σ:', labelX, currentY);
       ctx.fillStyle = hoveredMetricInfo.sigma > 0 ? '#f97316' : '#dc2626';
       ctx.fillText(`${hoveredMetricInfo.sigma > 0 ? '+' : ''}${hoveredMetricInfo.sigma.toFixed(2)}`, valueX, currentY);
 
-      // Actual
       currentY += 25;
       ctx.fillStyle = '#a16207';
       ctx.fillText('Actual:', labelX, currentY);
@@ -414,9 +442,38 @@ function FreakFinder() {
       const units = getMetricUnits(hoveredMetricInfo.formula);
       ctx.fillText(`${hoveredMetricInfo.value.toFixed(3)} ${units}`, valueX, currentY);
 
-      ctx.textAlign = 'start'; // Reset
+      ctx.textAlign = 'start';
+    }
+
+    // Draw athlete legend if multiple selected
+    if (allAthletesMetrics.length > 1) {
+      const legendX = 20;
+      let legendY = 20;
+
+      ctx.font = 'bold 11px sans-serif';
+      allAthletesMetrics.forEach(({ athlete, colorIndex }) => {
+        const colors = ATHLETE_COLORS[colorIndex];
+
+        ctx.fillStyle = colors.fill;
+        ctx.beginPath();
+        ctx.arc(legendX + 6, legendY + 6, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = colors.stroke;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(`${athlete.firstName} ${athlete.lastName}`, legendX + 18, legendY + 10);
+        legendY += 20;
+      });
     }
   };
+
+  useEffect(() => {
+    if (allAthletesMetrics.length > 0 && canvasRef.current) {
+      drawBellCurve();
+    }
+  }, [allAthletesMetrics, hoveredPoint, hoveredMetricInfo, selectedMetrics, hoveredCardMetric]);
 
   const handleCanvasClick = (e) => {
     const canvas = canvasRef.current;
@@ -428,26 +485,29 @@ function FreakFinder() {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    // Use filtered display metrics (no reciprocals)
-    const displayMetrics = mergeReciprocals(calculatedMetrics);
-    const clicked = displayMetrics.find(m => {
-      const dist = Math.sqrt(Math.pow(x - m.x, 2) + Math.pow(y - m.y, 2));
-      return dist < 10;
-    });
+    for (const { metrics } of allAthletesMetrics) {
+      const displayMetrics = mergeReciprocals(metrics);
+      const clicked = displayMetrics.find(m => {
+        const dist = Math.sqrt(Math.pow(x - m.x, 2) + Math.pow(y - m.y, 2));
+        return dist < 10;
+      });
 
-    if (clicked) {
-      // Check if already selected
-      const alreadySelected = selectedMetrics.some(sm => sm.formula === clicked.formula);
-
-      if (alreadySelected) {
-        // Remove from selection and Forged Profile
-        setSelectedMetrics(prev => prev.filter(sm => sm.formula !== clicked.formula));
-        removeForgedAxis(clicked.formula);
-      } else {
-        // Add to selection and Forged Profile
-        setSelectedMetrics(prev => [...prev, clicked]);
-        addForgedAxis(clicked.formula, clicked.formula);
+      if (clicked) {
+        toggleMetricSelection(clicked);
+        return;
       }
+    }
+  };
+
+  const toggleMetricSelection = (metric) => {
+    const alreadySelected = selectedMetrics.some(sm => sm.formula === metric.formula);
+
+    if (alreadySelected) {
+      setSelectedMetrics(prev => prev.filter(sm => sm.formula !== metric.formula));
+      removeForgedAxis(metric.formula);
+    } else {
+      setSelectedMetrics(prev => [...prev, metric]);
+      addForgedAxis(metric.formula, metric.formula);
     }
   };
 
@@ -461,33 +521,30 @@ function FreakFinder() {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    // Use filtered display metrics (no reciprocals)
-    const displayMetrics = mergeReciprocals(calculatedMetrics);
-    const hovered = displayMetrics.find(m => {
-      const dist = Math.sqrt(Math.pow(x - m.x, 2) + Math.pow(y - m.y, 2));
-      return dist < 10;
-    });
-
-    // Update hover state and legend info
-    if (hovered) {
-      if (!hoveredPoint || hoveredPoint.x !== hovered.x || hoveredPoint.y !== hovered.y) {
-        setHoveredPoint({ x: hovered.x, y: hovered.y });
-      }
-      setHoveredMetricInfo({
-        formula: hovered.formula,
-        sigma: hovered.sigma,
-        value: hovered.value
+    for (const { metrics } of allAthletesMetrics) {
+      const displayMetrics = mergeReciprocals(metrics);
+      const hovered = displayMetrics.find(m => {
+        const dist = Math.sqrt(Math.pow(x - m.x, 2) + Math.pow(y - m.y, 2));
+        return dist < 10;
       });
-    } else {
-      if (hoveredPoint) {
-        setHoveredPoint(null);
-      }
-      if (hoveredMetricInfo) {
-        setHoveredMetricInfo(null);
+
+      if (hovered) {
+        if (!hoveredPoint || hoveredPoint.x !== hovered.x || hoveredPoint.y !== hovered.y) {
+          setHoveredPoint({ x: hovered.x, y: hovered.y });
+        }
+        setHoveredMetricInfo({
+          formula: hovered.formula,
+          sigma: hovered.sigma,
+          value: hovered.value
+        });
+        canvas.style.cursor = 'pointer';
+        return;
       }
     }
 
-    canvas.style.cursor = hovered ? 'pointer' : 'default';
+    if (hoveredPoint) setHoveredPoint(null);
+    if (hoveredMetricInfo) setHoveredMetricInfo(null);
+    canvas.style.cursor = 'default';
   };
 
   const filteredAthletes = searchQuery
@@ -497,43 +554,54 @@ function FreakFinder() {
   const selectedAthleteObjects = athletes.filter(a => selectedAthletes.includes(a.id));
   const unselectedAthletes = filteredAthletes.filter(a => !selectedAthletes.includes(a.id));
 
-  const extremeMetrics = mergeReciprocals(
-    calculatedMetrics.filter(m => Math.abs(m.sigma) >= 1.5)
-  );
+  // Get metrics for display
+  const primaryAthleteMetrics = allAthletesMetrics.length > 0 ? allAthletesMetrics[0].metrics : [];
+  const sortedMetrics = [...primaryAthleteMetrics].sort((a, b) => Math.abs(b.sigma) - Math.abs(a.sigma));
+  const extremeMetrics = mergeReciprocals(sortedMetrics.filter(m => Math.abs(m.sigma) >= 1.5));
+
+  // FEATURE #5: Split into positive/negative columns
+  const positiveMetrics = extremeMetrics.filter(m => m.sigma > 0);
+  const negativeMetrics = extremeMetrics.filter(m => m.sigma < 0);
+
+  // FEATURE #4: Card click handler
+  const handleCardClick = (metric) => {
+    toggleMetricSelection(metric);
+  };
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
+      {/* FEATURE #7: Optimized sidebar width */}
       <div style={{
-        width: '350px',
+        width: '280px',
         background: '#1e293b',
         borderRight: '1px solid #78350f',
-        padding: '1rem',
+        padding: '0.75rem',
         overflowY: 'auto'
       }}>
-        <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: '#fb923c' }}>Athletes</h3>
+        <h3 style={{ marginBottom: '0.75rem', fontSize: '1rem', color: '#fb923c' }}>Athletes</h3>
 
         <input
           type="text"
-          placeholder="Search athletes..."
+          placeholder="Search..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{
             width: '100%',
-            padding: '0.5rem',
-            marginBottom: '1rem',
+            padding: '0.4rem',
+            marginBottom: '0.75rem',
             background: '#0f172a',
             border: '1px solid #78350f',
             borderRadius: '0.375rem',
             color: '#fbbf24',
-            fontSize: '0.9rem'
+            fontSize: '0.85rem'
           }}
         />
 
         {/* Selected Athletes Section */}
         {selectedAthleteObjects.length > 0 && (
           <div style={{
-            marginBottom: '1rem',
-            padding: '1rem',
+            marginBottom: '0.75rem',
+            padding: '0.75rem',
             background: '#422006',
             borderRadius: '0.5rem',
             border: '2px solid #ea580c'
@@ -542,87 +610,80 @@ function FreakFinder() {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              marginBottom: '0.75rem'
+              marginBottom: '0.5rem'
             }}>
-              <h4 style={{ fontSize: '0.95rem', color: '#fb923c', fontWeight: '600' }}>
+              <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>
                 ✓ Selected ({selectedAthleteObjects.length})
               </h4>
               <button
                 onClick={clearSelectedAthletes}
                 style={{
-                  padding: '0.25rem 0.5rem',
+                  padding: '0.2rem 0.4rem',
                   background: '#7c2d12',
                   border: '1px solid #ea580c',
                   borderRadius: '0.25rem',
                   color: '#fdba74',
-                  fontSize: '0.75rem',
+                  fontSize: '0.7rem',
                   cursor: 'pointer'
                 }}
               >
-                Clear All
+                Clear
               </button>
             </div>
 
-            {selectedAthleteObjects.map(athlete => {
+            {selectedAthleteObjects.map((athlete, index) => {
               const bands = calculateSigmaBands(athlete);
+              const colorIndex = index % ATHLETE_COLORS.length;
+              const colors = ATHLETE_COLORS[colorIndex];
+
               return (
                 <div
                   key={athlete.id}
                   onClick={() => setSelectedAthlete(athlete)}
                   style={{
-                    padding: '0.5rem',
+                    padding: '0.4rem',
                     marginBottom: '0.25rem',
                     borderRadius: '0.375rem',
                     cursor: 'pointer',
                     background: selectedAthlete?.id === athlete.id ? '#7c2d12' : '#292524',
-                    border: '1px solid #78350f',
+                    border: `2px solid ${colors.fill}`,
                     transition: 'background 0.2s'
                   }}
-                  onMouseEnter={(e) => {
-                    if (selectedAthlete?.id !== athlete.id) {
-                      e.currentTarget.style.background = '#57534e';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedAthlete?.id !== athlete.id) {
-                      e.currentTarget.style.background = '#292524';
-                    }
-                  }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <input
                       type="checkbox"
                       checked={true}
                       onChange={() => toggleAthleteSelection(athlete.id)}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ cursor: 'pointer', accentColor: '#ea580c' }}
+                      style={{ cursor: 'pointer', accentColor: colors.fill }}
                     />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '0.85rem', fontWeight: '500', color: '#fbbf24' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: '500', color: '#fbbf24', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {athlete.firstName} {athlete.lastName}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: '#a16207', marginTop: '0.125rem' }}>
+                      <div style={{ fontSize: '0.7rem', color: '#a16207' }}>
                         {athlete.position} • {athlete.state}
                       </div>
                     </div>
                   </div>
 
-                  {/* Sigma bands */}
+                  {/* FEATURE #7: Left-justified sigma bands */}
                   <div style={{
                     display: 'flex',
-                    gap: '0.5rem',
-                    marginTop: '0.5rem',
-                    fontSize: '0.75rem',
-                    justifyContent: 'flex-end',
+                    gap: '0.25rem',
+                    marginTop: '0.35rem',
+                    fontSize: '0.65rem',
+                    justifyContent: 'flex-start',
                     fontFamily: 'monospace'
                   }}>
-                    <span style={{ color: '#ef4444', width: '20px', textAlign: 'right' }}>{bands.minus3 || '-'}</span>
-                    <span style={{ color: '#ef4444', width: '20px', textAlign: 'right' }}>{bands.minus2 || '-'}</span>
-                    <span style={{ color: '#ef4444', width: '20px', textAlign: 'right' }}>{bands.minus1 || '-'}</span>
-                    <span style={{ color: '#94a3b8', width: '20px', textAlign: 'center' }}>{bands.zero || '-'}</span>
-                    <span style={{ color: '#10b981', width: '20px', textAlign: 'left' }}>{bands.plus1 || '-'}</span>
-                    <span style={{ color: '#10b981', width: '20px', textAlign: 'left' }}>{bands.plus2 || '-'}</span>
-                    <span style={{ color: '#10b981', width: '20px', textAlign: 'left' }}>{bands.plus3 || '-'}</span>
+                    <span style={{ color: '#ef4444', width: '14px' }}>{bands.minus3 || '-'}</span>
+                    <span style={{ color: '#ef4444', width: '14px' }}>{bands.minus2 || '-'}</span>
+                    <span style={{ color: '#ef4444', width: '14px' }}>{bands.minus1 || '-'}</span>
+                    <span style={{ color: '#94a3b8', width: '14px' }}>{bands.zero || '-'}</span>
+                    <span style={{ color: '#10b981', width: '14px' }}>{bands.plus1 || '-'}</span>
+                    <span style={{ color: '#10b981', width: '14px' }}>{bands.plus2 || '-'}</span>
+                    <span style={{ color: '#10b981', width: '14px' }}>{bands.plus3 || '-'}</span>
                   </div>
                 </div>
               );
@@ -631,7 +692,7 @@ function FreakFinder() {
         )}
 
         {/* All Athletes List */}
-        <div style={{ fontSize: '0.85rem', color: '#a16207', marginBottom: '0.5rem' }}>
+        <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.4rem' }}>
           {unselectedAthletes.length} athletes
         </div>
 
@@ -643,8 +704,8 @@ function FreakFinder() {
               key={athlete.id}
               onClick={() => setSelectedAthlete(athlete)}
               style={{
-                padding: '0.75rem',
-                marginBottom: '0.25rem',
+                padding: '0.5rem',
+                marginBottom: '0.2rem',
                 borderRadius: '0.375rem',
                 cursor: 'pointer',
                 background: selectedAthlete?.id === athlete.id ? '#7c2d12' : 'transparent',
@@ -661,7 +722,7 @@ function FreakFinder() {
                 }
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <input
                   type="checkbox"
                   checked={selectedAthletes.includes(athlete.id)}
@@ -669,78 +730,84 @@ function FreakFinder() {
                   onClick={(e) => e.stopPropagation()}
                   style={{ cursor: 'pointer', accentColor: '#ea580c' }}
                 />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.95rem', fontWeight: '500', color: '#fbbf24' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: '500', color: '#fbbf24', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {athlete.firstName} {athlete.lastName}
                   </div>
-                  <div style={{ fontSize: '0.8rem', color: '#a16207', marginTop: '0.25rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#a16207' }}>
                     {athlete.position} • {athlete.state} • {athlete.gradYear}
                   </div>
                 </div>
               </div>
 
-              {/* Sigma bands */}
+              {/* FEATURE #7: Left-justified sigma bands */}
               <div style={{
                 display: 'flex',
-                gap: '0.5rem',
-                marginTop: '0.5rem',
-                fontSize: '0.75rem',
-                justifyContent: 'flex-end',
+                gap: '0.25rem',
+                marginTop: '0.35rem',
+                fontSize: '0.65rem',
+                justifyContent: 'flex-start',
                 fontFamily: 'monospace'
               }}>
-                <span style={{ color: '#ef4444', width: '20px', textAlign: 'right' }}>{bands.minus3 || '-'}</span>
-                <span style={{ color: '#ef4444', width: '20px', textAlign: 'right' }}>{bands.minus2 || '-'}</span>
-                <span style={{ color: '#ef4444', width: '20px', textAlign: 'right' }}>{bands.minus1 || '-'}</span>
-                <span style={{ color: '#94a3b8', width: '20px', textAlign: 'center' }}>{bands.zero || '-'}</span>
-                <span style={{ color: '#10b981', width: '20px', textAlign: 'left' }}>{bands.plus1 || '-'}</span>
-                <span style={{ color: '#10b981', width: '20px', textAlign: 'left' }}>{bands.plus2 || '-'}</span>
-                <span style={{ color: '#10b981', width: '20px', textAlign: 'left' }}>{bands.plus3 || '-'}</span>
+                <span style={{ color: '#ef4444', width: '14px' }}>{bands.minus3 || '-'}</span>
+                <span style={{ color: '#ef4444', width: '14px' }}>{bands.minus2 || '-'}</span>
+                <span style={{ color: '#ef4444', width: '14px' }}>{bands.minus1 || '-'}</span>
+                <span style={{ color: '#94a3b8', width: '14px' }}>{bands.zero || '-'}</span>
+                <span style={{ color: '#10b981', width: '14px' }}>{bands.plus1 || '-'}</span>
+                <span style={{ color: '#10b981', width: '14px' }}>{bands.plus2 || '-'}</span>
+                <span style={{ color: '#10b981', width: '14px' }}>{bands.plus3 || '-'}</span>
               </div>
             </div>
           );
         })}
       </div>
 
-      <div style={{ flex: 1, padding: '2rem', overflowY: 'auto' }}>
-        {selectedAthlete ? (
+      {/* Main content */}
+      <div style={{ flex: 1, padding: '1.5rem', overflowY: 'auto' }}>
+        {allAthletesMetrics.length > 0 ? (
           <>
-            <div style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h2 style={{ fontSize: '1.8rem', marginBottom: '0.5rem', color: '#fb923c' }}>
-                  💎 Freak Finder: {selectedAthlete.firstName} {selectedAthlete.lastName}
+                <h2 style={{ fontSize: '1.6rem', marginBottom: '0.5rem', color: '#fb923c' }}>
+                  💎 Freak Finder
+                  {allAthletesMetrics.length === 1 && `: ${allAthletesMetrics[0].athlete.firstName} ${allAthletesMetrics[0].athlete.lastName}`}
+                  {allAthletesMetrics.length > 1 && ` (${allAthletesMetrics.length} Athletes)`}
                 </h2>
-                <div style={{ color: '#a16207', fontSize: '1rem' }}>
-                  Analyzing {calculatedMetrics.length} metrics • {extremeMetrics.length} exceptional found
+                <div style={{ color: '#a16207', fontSize: '0.9rem' }}>
+                  Analyzing {primaryAthleteMetrics.length} metrics • {extremeMetrics.length} exceptional found
                 </div>
               </div>
-              <button
-                onClick={() => exportAthleteToPDF(selectedAthlete, calculatedMetrics, dataService.getStatistics())}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  background: '#ea580c',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  color: '#fef3c7',
-                  fontSize: '0.95rem',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
-              >
-                📄 Export Report
-              </button>
+              {allAthletesMetrics.length === 1 && (
+                <button
+                  onClick={() => exportAthleteToPDF(allAthletesMetrics[0].athlete, primaryAthleteMetrics, dataService.getStatistics())}
+                  style={{
+                    padding: '0.6rem 1.2rem',
+                    background: '#ea580c',
+                    border: 'none',
+                    borderRadius: '0.5rem',
+                    color: '#fef3c7',
+                    fontSize: '0.9rem',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}
+                >
+                  📄 Export Report
+                </button>
+              )}
             </div>
 
+            {/* Bell Curve */}
             <div style={{
               background: '#1e293b',
-              padding: '2rem',
+              padding: '1.5rem',
               borderRadius: '0.5rem',
-              marginBottom: '2rem',
+              marginBottom: '1.5rem',
               borderLeft: '4px solid #ea580c'
             }}>
-              <h3 style={{ marginBottom: '1rem', fontSize: '1.2rem', color: '#fb923c' }}>
+              <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: '#fb923c' }}>
                 Statistical Distribution
               </h3>
               <canvas
@@ -752,11 +819,11 @@ function FreakFinder() {
                 style={{ width: '100%', borderRadius: '0.375rem' }}
               />
               <div style={{
-                marginTop: '1rem',
-                fontSize: '0.85rem',
+                marginTop: '0.75rem',
+                fontSize: '0.8rem',
                 color: '#a16207',
                 display: 'flex',
-                gap: '2rem',
+                gap: '1.5rem',
                 justifyContent: 'center'
               }}>
                 <div>
@@ -765,11 +832,15 @@ function FreakFinder() {
                 <div>
                   <span style={{ color: '#fb923c', fontWeight: 'bold' }}>●</span> Calculated Ratios
                 </div>
+                <div style={{ color: '#fbbf24', fontSize: '0.75rem' }}>
+                  Click points or cards to add to Forged Profile
+                </div>
               </div>
             </div>
 
+            {/* FEATURE #5: Two-column layout for positive/negative metrics */}
             <div>
-              <h3 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>
+              <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>
                 💎 Exceptional Metrics (|σ| ≥ 1.5)
               </h3>
 
@@ -784,102 +855,158 @@ function FreakFinder() {
                   No exceptional metrics found (all within ±1.5σ)
                 </div>
               ) : (
-                <div style={{ display: 'grid', gap: '1rem' }}>
-                  {extremeMetrics.map((metric, index) => {
-                    const units = getMetricUnits(metric.formula);
-                    const explanationKey = (metric.formula.toLowerCase().replace(/ /g, '').replace(/-/g, ''));
-                    const explanation = METRIC_EXPLANATIONS[metric.metricKey] ||
-                                       METRIC_EXPLANATIONS[explanationKey] ||
-                                       'This metric provides insight into athletic performance.';
-
-                    return (
-                      <div
-                        key={index}
-                        style={{
-                          background: '#1e293b',
-                          padding: '1.25rem',
-                          borderRadius: '0.5rem',
-                          borderLeft: `4px solid ${metric.sigma > 0 ? '#f97316' : '#dc2626'}` // Orange/red fire theme
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-                              {metric.formula}
-                            </div>
-                            <div style={{ fontSize: '1rem', color: '#cbd5e1' }}>
-                              {typeof metric.value === 'number' ? metric.value.toFixed(3) : metric.value} {units}
-                            </div>
-                          </div>
-                          <div>
-                            <div style={{
-                              fontSize: '1.5rem',
-                              fontWeight: 'bold',
-                              color: metric.sigma > 0 ? '#f97316' : '#dc2626'
-                            }}>
-                              {metric.sigma > 0 ? '+' : ''}{metric.sigma.toFixed(2)}σ
-                            </div>
-                            {metric.hasReciprocal && (
-                              <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                marginTop: '0.25rem',
-                                justifyContent: 'flex-end'
-                              }}>
-                                <div style={{
-                                  fontSize: '0.75rem',
-                                  color: '#78716c',
-                                  textAlign: 'right'
-                                }}>
-                                  Recip: {metric.reciprocalSigma > 0 ? '+' : ''}{metric.reciprocalSigma.toFixed(2)}σ
-                                </div>
-                                <button
-                                  style={{
-                                    padding: '0.2rem 0.5rem',
-                                    background: '#422006',
-                                    border: '1px solid #78350f',
-                                    borderRadius: '0.25rem',
-                                    color: '#fdba74',
-                                    fontSize: '0.65rem',
-                                    cursor: 'pointer',
-                                    whiteSpace: 'nowrap'
-                                  }}
-                                  onClick={() => {
-                                    const recipUnits = getMetricUnits(metric.reciprocalFormula);
-                                    alert(`${metric.reciprocalFormula}\nValue: ${metric.reciprocalValue?.toFixed(3)} ${recipUnits}\nSigma: ${metric.reciprocalSigma > 0 ? '+' : ''}${metric.reciprocalSigma.toFixed(2)}σ`);
-                                  }}
-                                >
-                                  Invert
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  {/* NEGATIVE SIGMA COLUMN (Left) */}
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ color: '#dc2626', fontSize: '0.9rem', marginBottom: '0.75rem', textAlign: 'center' }}>
+                      ▼ Below Average
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {negativeMetrics.map((metric, index) => (
+                        <MetricCard
+                          key={index}
+                          metric={metric}
+                          units={getMetricUnits(metric.formula)}
+                          explanation={METRIC_EXPLANATIONS[metric.metricKey] || METRIC_EXPLANATIONS[metric.formula.toLowerCase().replace(/ /g, '').replace(/-/g, '')] || 'This metric provides insight into athletic performance.'}
+                          isSelected={selectedMetrics.some(sm => sm.formula === metric.formula)}
+                          onClick={() => handleCardClick(metric)}
+                          onMouseEnter={() => setHoveredCardMetric(metric.formula)}
+                          onMouseLeave={() => setHoveredCardMetric(null)}
+                          athleteCount={allAthletesMetrics.length}
+                          allAthletesData={allAthletesMetrics}
+                        />
+                      ))}
+                      {negativeMetrics.length === 0 && (
+                        <div style={{ color: '#64748b', fontSize: '0.85rem', textAlign: 'center', padding: '1rem' }}>
+                          No negative outliers
                         </div>
+                      )}
+                    </div>
+                  </div>
 
-                        <div style={{
-                          marginTop: '0.75rem',
-                          padding: '0.75rem',
-                          background: '#0f172a',
-                          borderRadius: '0.375rem',
-                          fontSize: '0.85rem',
-                          color: '#cbd5e1',
-                          lineHeight: '1.4'
-                        }}>
-                          {explanation}
+                  {/* POSITIVE SIGMA COLUMN (Right) */}
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ color: '#f97316', fontSize: '0.9rem', marginBottom: '0.75rem', textAlign: 'center' }}>
+                      ▲ Above Average
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {positiveMetrics.map((metric, index) => (
+                        <MetricCard
+                          key={index}
+                          metric={metric}
+                          units={getMetricUnits(metric.formula)}
+                          explanation={METRIC_EXPLANATIONS[metric.metricKey] || METRIC_EXPLANATIONS[metric.formula.toLowerCase().replace(/ /g, '').replace(/-/g, '')] || 'This metric provides insight into athletic performance.'}
+                          isSelected={selectedMetrics.some(sm => sm.formula === metric.formula)}
+                          onClick={() => handleCardClick(metric)}
+                          onMouseEnter={() => setHoveredCardMetric(metric.formula)}
+                          onMouseLeave={() => setHoveredCardMetric(null)}
+                          athleteCount={allAthletesMetrics.length}
+                          allAthletesData={allAthletesMetrics}
+                        />
+                      ))}
+                      {positiveMetrics.length === 0 && (
+                        <div style={{ color: '#64748b', fontSize: '0.85rem', textAlign: 'center', padding: '1rem' }}>
+                          No positive outliers
                         </div>
-                      </div>
-                    );
-                  })}
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
           </>
         ) : (
           <div style={{ textAlign: 'center', padding: '4rem', color: '#64748b' }}>
-            Loading athletes...
+            Select an athlete or check boxes to compare multiple athletes
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// FEATURE #4 & #5: MetricCard component with click-to-select and multi-athlete display
+function MetricCard({ metric, units, explanation, isSelected, onClick, onMouseEnter, onMouseLeave, athleteCount, allAthletesData }) {
+  const getMetricForAthlete = (athleteData) => {
+    return athleteData.metrics.find(m => m.formula === metric.formula);
+  };
+
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      style={{
+        background: isSelected ? '#422006' : '#1e293b',
+        padding: '1rem',
+        borderRadius: '0.5rem',
+        borderLeft: `4px solid ${metric.sigma > 0 ? '#f97316' : '#dc2626'}`,
+        border: isSelected ? '2px solid #ea580c' : undefined,
+        cursor: 'pointer',
+        transition: 'all 0.2s'
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '0.4rem' }}>
+            {metric.formula}
+          </div>
+
+          {athleteCount > 1 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
+              {allAthletesData.map(({ athlete, colorIndex, metrics }) => {
+                const athleteMetric = getMetricForAthlete({ metrics });
+                if (!athleteMetric) return null;
+                const colors = ATHLETE_COLORS[colorIndex];
+                return (
+                  <div key={athlete.id} style={{
+                    padding: '0.25rem 0.5rem',
+                    background: '#0f172a',
+                    borderRadius: '0.25rem',
+                    borderLeft: `3px solid ${colors.fill}`,
+                    fontSize: '0.8rem'
+                  }}>
+                    <span style={{ color: '#a16207' }}>{athlete.firstName.charAt(0)}{athlete.lastName.charAt(0)}: </span>
+                    <span style={{ color: '#fbbf24' }}>{athleteMetric.value.toFixed(2)}</span>
+                    <span style={{ color: athleteMetric.sigma > 0 ? '#f97316' : '#dc2626', marginLeft: '0.25rem' }}>
+                      ({athleteMetric.sigma > 0 ? '+' : ''}{athleteMetric.sigma.toFixed(1)}σ)
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: '0.9rem', color: '#cbd5e1' }}>
+              {typeof metric.value === 'number' ? metric.value.toFixed(3) : metric.value} {units}
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{
+            fontSize: '1.3rem',
+            fontWeight: 'bold',
+            color: metric.sigma > 0 ? '#f97316' : '#dc2626'
+          }}>
+            {metric.sigma > 0 ? '+' : ''}{metric.sigma.toFixed(2)}σ
+          </div>
+          {isSelected && (
+            <div style={{ fontSize: '0.7rem', color: '#10b981', textAlign: 'right', marginTop: '0.25rem' }}>
+              ✓ Selected
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: '0.6rem',
+        padding: '0.6rem',
+        background: '#0f172a',
+        borderRadius: '0.375rem',
+        fontSize: '0.8rem',
+        color: '#cbd5e1',
+        lineHeight: '1.4'
+      }}>
+        {explanation}
       </div>
     </div>
   );

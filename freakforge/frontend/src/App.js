@@ -49,10 +49,17 @@ function App() {
         flex: 1,
         overflow: 'hidden'
       }}>
-        {activeTab === 'selection' && <Dashboard />}
+        {/* Selection tab - athlete list only, no charts */}
+        {activeTab === 'selection' && <Dashboard mode="selection" />}
+
+        {/* Metric Explorer - bell curve analysis */}
         {activeTab === 'metric-explorer' && <FreakFinder />}
-        {activeTab === 'charts' && <Dashboard />}
+
+        {/* Charts tab - graphs only, no data cards */}
+        {activeTab === 'charts' && <Dashboard mode="charts" />}
+
         {activeTab === 'settings' && <Settings />}
+
         {!['selection', 'metric-explorer', 'charts', 'settings'].includes(activeTab) && (
           <div style={{ padding: '2rem' }}>
             <h2 style={{marginBottom: '2rem', fontSize: '1.5rem'}}>
