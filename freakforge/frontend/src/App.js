@@ -5,7 +5,7 @@ import FreakFinder from './components/MetricExplorer/FreakFinder';
 import Settings from './components/Settings/Settings';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('selection');
 
   return (
     <div className="app-container">
@@ -53,7 +53,7 @@ function App() {
         {activeTab === 'metric-explorer' && <FreakFinder />}
         {activeTab === 'charts' && <Dashboard />}
         {activeTab === 'settings' && <Settings />}
-        {activeTab !== 'dashboard' && activeTab !== 'metric-explorer' && activeTab !== 'settings' && (
+        {!['selection', 'metric-explorer', 'charts', 'settings'].includes(activeTab) && (
           <div style={{ padding: '2rem' }}>
             <h2 style={{marginBottom: '2rem', fontSize: '1.5rem'}}>
               {activeTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}

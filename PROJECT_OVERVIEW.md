@@ -148,8 +148,8 @@ See `docs/GETTING_STARTED.md` for detailed setup instructions.
 **Quick Start:**
 ```bash
 # Extract the zip file
-unzip athletic-metrics-analyzer.zip
-cd athletic-metrics-analyzer
+unzip freakforge.zip
+cd freakforge
 
 # Install & run backend
 cd backend

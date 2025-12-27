@@ -1,8 +1,40 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="All updated files. Numerous changes. Want to establish a new context for a vibe-code session.">
+    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="Update to pick up all unversioned files.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/PROJECT_OVERVIEW.md" beforeDir="false" afterPath="$PROJECT_DIR$/PROJECT_OVERVIEW.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/api/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/api/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/api/routes/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/api/routes/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/import_combine_data.py" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/import_combine_data.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/backend/services/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/backend/services/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/database/schema.sql" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/database/schema.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/database/seeds/athletes_data.json" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/database/seeds/athletes_data.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/database/seeds/football_combine_data_combined.csv" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/database/seeds/football_combine_data_combined.csv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/docs/GETTING_STARTED.md" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/docs/GETTING_STARTED.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/public/athletes_sample_100.json" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/public/athletes_sample_100.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/public/demo.html" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/public/demo.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/public/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/public/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/App.css" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/App.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/App.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/components/Dashboard/Dashboard.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/Dashboard/Dashboard.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/components/MetricExplorer/FreakFinder.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/MetricExplorer/FreakFinder.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/components/Settings/Settings.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/Settings/Settings.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/components/common/FilterPanel.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/common/FilterPanel.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/context/AppContext.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/context/AppContext.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/index.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/index.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/utils/dataService.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/dataService.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/utils/pdfExport.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/pdfExport.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/frontend/src/utils/settingsUtils.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/settingsUtils.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/athletic-metrics-analyzer/uploads/.gitkeep" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/uploads/.gitkeep" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -76,7 +108,7 @@
       <option name="presentableId" value="Default" />
       <updated>1766616229934</updated>
       <workItem from="1766616230976" duration="8783000" />
-      <workItem from="1766723605532" duration="8325000" />
+      <workItem from="1766723605532" duration="9264000" />
     </task>
     <task id="LOCAL-00001" summary="First Comit">
       <option name="closed" value="true" />
@@ -94,7 +126,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766802029990</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Update to pick up all unversioned files.">
+      <option name="closed" value="true" />
+      <created>1766802411355</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1766802411355</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -103,7 +143,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="First Comit" />
     <MESSAGE value="All updated files. Numerous changes. Want to establish a new context for a vibe-code session." />
-    <option name="LAST_COMMIT_MESSAGE" value="All updated files. Numerous changes. Want to establish a new context for a vibe-code session." />
+    <MESSAGE value="Update to pick up all unversioned files." />
+    <option name="LAST_COMMIT_MESSAGE" value="Update to pick up all unversioned files." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/athletic_app$main.coverage" NAME="main Coverage Results" MODIFIED="1766715571495" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/athletic-metrics-analyzer/backend" />
