@@ -439,11 +439,11 @@ function Dashboard({ mode = 'selection' }) {
     if (chartInstance.current) chartInstance.current.destroy();
 
     let metrics = [
-      { key: 'dash40', label: '40-Yard Dash' },
-      { key: 'verticalJump', label: 'Vertical Jump' },
-      { key: 'broadJump', label: 'Broad Jump' },
-      { key: 'proAgility', label: 'Pro Agility' },
-      { key: 'lDrill', label: 'L-Drill' }
+      { key: 'dash40', label: '40-Yard Dash (sec)' },
+      { key: 'verticalJump', label: 'Vertical Jump (in)' },
+      { key: 'broadJump', label: 'Broad Jump (in)' },
+      { key: 'proAgility', label: 'Pro Agility (sec)' },
+      { key: 'lDrill', label: 'L-Drill (sec)' }
     ];
     metrics = arrangeForPentagon(metrics);
 
@@ -513,7 +513,7 @@ function Dashboard({ mode = 'selection' }) {
     const ctx = physicalChartRef.current.getContext('2d');
     if (physicalChartInstance.current) physicalChartInstance.current.destroy();
 
-    let metrics = [{ key: 'height', label: 'Height' }, { key: 'weight', label: 'Weight' }];
+    let metrics = [{ key: 'height', label: 'Height (in)' }, { key: 'weight', label: 'Weight (lbs)' }];
     metrics = arrangeForPentagon(ensureMinimumAxes(metrics, 5));
 
     const athletesToDisplay = athletes.filter(a => selectedAthletes.includes(a.id));
@@ -618,6 +618,13 @@ function Dashboard({ mode = 'selection' }) {
       return '';
     };
 
+    // Add units to labels
+    metrics = metrics.map(m => {
+      if (m.isPlaceholder) return m;
+      const unit = getForgedUnit(m.key);
+      return { ...m, label: unit ? `${m.label} (${unit})` : m.label };
+    });
+
     const datasets = athletesToDisplay.map((athlete, index) => {
       const data = metrics.map(metric => calculateMetricData(athlete, metric, 'forged'));
       const rawValues = metrics.map(metric => metric.isPlaceholder ? null : getForgedRawValue(athlete, metric.key));
@@ -660,9 +667,9 @@ function Dashboard({ mode = 'selection' }) {
             beginAtZero: true,
             max: 100,
             min: 0,
-            ticks: { stepSize: 25, color: '#a16207', backdropColor: 'transparent', font: { size: 10 } },
+            ticks: { stepSize: 25, color: '#a16207', backdropColor: 'transparent', font: { size: 11 } },
             grid: { color: '#78350f' },
-            pointLabels: { color: '#fbbf24', font: { size: 9, weight: '500' }, padding: 15 }
+            pointLabels: { color: '#fbbf24', font: { size: 12, weight: '500' } }
           }
         },
         plugins: {
@@ -702,22 +709,38 @@ function Dashboard({ mode = 'selection' }) {
     const athletesToDisplay = athletes.filter(a => selectedAthletes.includes(a.id));
     if (athletesToDisplay.length === 0) return;
 
-    // Prepare metrics
+    // Prepare metrics with units
     const standardMetrics = arrangeForPentagon([
-      { key: 'dash40', label: '40-Yard Dash' },
-      { key: 'verticalJump', label: 'Vertical Jump' },
-      { key: 'broadJump', label: 'Broad Jump' },
-      { key: 'proAgility', label: 'Pro Agility' },
-      { key: 'lDrill', label: 'L-Drill' }
+      { key: 'dash40', label: '40-Yard Dash (sec)' },
+      { key: 'verticalJump', label: 'Vertical Jump (in)' },
+      { key: 'broadJump', label: 'Broad Jump (in)' },
+      { key: 'proAgility', label: 'Pro Agility (sec)' },
+      { key: 'lDrill', label: 'L-Drill (sec)' }
     ]);
 
     const attributeMetrics = arrangeForPentagon(ensureMinimumAxes([
-      { key: 'height', label: 'Height' },
-      { key: 'weight', label: 'Weight' }
+      { key: 'height', label: 'Height (in)' },
+      { key: 'weight', label: 'Weight (lbs)' }
     ], 5));
 
+    // Helper to get forged unit string for iso charts
+    const getForgedUnitForLabel = (metricKey) => {
+      if (!metricKey || metricKey.startsWith('placeholder_')) return '';
+      const parts = metricKey.split(' / ');
+      if (parts.length !== 2) return '';
+      const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
+      const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
+      const numUnit = METRIC_UNITS[numKey] || '';
+      const denUnit = METRIC_UNITS[denKey] || '';
+      if (numUnit && denUnit) return `${numUnit}/${denUnit}`;
+      return '';
+    };
+
     const forgedMetrics = arrangeForPentagon(ensureMinimumAxes(
-      forgedAxes.map(axis => ({ key: axis.formula, label: axis.label })),
+      forgedAxes.map(axis => {
+        const unit = getForgedUnitForLabel(axis.formula);
+        return { key: axis.formula, label: unit ? `${axis.label} (${unit})` : axis.label };
+      }),
       5
     ));
 
@@ -1297,20 +1320,17 @@ function Dashboard({ mode = 'selection' }) {
     </div>
   );
 
-  // Athlete legend component for stacked radar charts
+  // Athlete legend component for stacked radar charts - no background pane
   const AthleteLegend = ({ athleteList }) => (
     <div style={{
-      minWidth: '140px',
-      maxWidth: '160px',
-      padding: '0.5rem',
-      background: '#0f172a',
-      borderRadius: '0.375rem',
+      minWidth: '130px',
+      maxWidth: '150px',
+      padding: '0.5rem 0.25rem',
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'center',
       gap: '0.4rem'
     }}>
-      <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', marginBottom: '0.25rem', textTransform: 'uppercase' }}>Athletes</div>
       {athleteList.map((athlete, index) => {
         const colorIndex = index % ATHLETE_COLORS.length;
         const colors = ATHLETE_COLORS[colorIndex];
@@ -1339,85 +1359,6 @@ function Dashboard({ mode = 'selection' }) {
       })}
     </div>
   );
-
-  // Units legend component for stacked radar charts
-  const UnitsLegend = ({ metrics, type }) => {
-    // Filter out placeholder metrics
-    const realMetrics = metrics.filter(m => !m.isPlaceholder && m.label);
-    if (realMetrics.length === 0) return null;
-
-    return (
-      <div style={{
-        minWidth: '140px',
-        maxWidth: '180px',
-        padding: '0.5rem',
-        background: '#0f172a',
-        borderRadius: '0.375rem',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        gap: '0.3rem'
-      }}>
-        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', marginBottom: '0.25rem', textTransform: 'uppercase' }}>Units</div>
-        {realMetrics.map((metric, index) => {
-          let unit = '';
-          if (type === 'forged') {
-            const parts = metric.key.split(' / ');
-            if (parts.length === 2) {
-              const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
-              const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
-              const numUnit = METRIC_UNITS[numKey] || '';
-              const denUnit = METRIC_UNITS[denKey] || '';
-              unit = numUnit && denUnit ? `${numUnit}/${denUnit}` : '';
-            }
-          } else {
-            unit = METRIC_UNITS[metric.key] || '';
-          }
-          return (
-            <div key={index} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-              <span style={{
-                fontSize: '0.7rem',
-                color: '#fbbf24',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                flex: 1
-              }}>
-                {metric.label}
-              </span>
-              <span style={{
-                fontSize: '0.7rem',
-                color: '#94a3b8',
-                fontFamily: 'monospace',
-                flexShrink: 0
-              }}>
-                ({unit || '-'})
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  // Get metrics for each chart type (for legends)
-  const getStandardMetrics = () => arrangeForPentagon([
-    { key: 'dash40', label: '40-Yard Dash' },
-    { key: 'verticalJump', label: 'Vertical Jump' },
-    { key: 'broadJump', label: 'Broad Jump' },
-    { key: 'proAgility', label: 'Pro Agility' },
-    { key: 'lDrill', label: 'L-Drill' }
-  ]);
-
-  const getAttributeMetrics = () => arrangeForPentagon(ensureMinimumAxes([
-    { key: 'height', label: 'Height' },
-    { key: 'weight', label: 'Weight' }
-  ], 5));
-
-  const getForgedMetrics = () => arrangeForPentagon(ensureMinimumAxes(
-    forgedAxes.map(axis => ({ key: axis.formula, label: axis.label })),
-    5
-  ));
 
   // Render iso charts grid
   const renderIsoCharts = (type, athletesToDisplay) => {
@@ -1488,7 +1429,6 @@ function Dashboard({ mode = 'selection' }) {
                     <div style={{ flex: 1, position: 'relative', minHeight: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <canvas ref={chartRef} style={{ maxWidth: '100%', maxHeight: '100%' }}></canvas>
                     </div>
-                    <UnitsLegend metrics={getStandardMetrics()} type="standard" />
                   </div>
                   <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                 </>
@@ -1510,7 +1450,6 @@ function Dashboard({ mode = 'selection' }) {
                     <div style={{ flex: 1, position: 'relative', minHeight: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <canvas ref={physicalChartRef} style={{ maxWidth: '100%', maxHeight: '100%' }}></canvas>
                     </div>
-                    <UnitsLegend metrics={getAttributeMetrics()} type="attribute" />
                   </div>
                   <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                 </>
@@ -1546,7 +1485,6 @@ function Dashboard({ mode = 'selection' }) {
                       <div style={{ flex: 1, position: 'relative', minHeight: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <canvas ref={forgedChartRef} style={{ maxWidth: '100%', maxHeight: '100%' }}></canvas>
                       </div>
-                      <UnitsLegend metrics={getForgedMetrics()} type="forged" />
                     </div>
                     <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                   </>

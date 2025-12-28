@@ -104,6 +104,13 @@ function FreakFinder() {
     });
   }, []);
 
+  // Sync selectedMetrics with forgedAxes when component mounts or forgedAxes changes
+  useEffect(() => {
+    // Rebuild selectedMetrics from forgedAxes to maintain persistence across tab navigation
+    const syncedMetrics = forgedAxes.map(axis => ({ formula: axis.formula }));
+    setSelectedMetrics(syncedMetrics);
+  }, [forgedAxes]);
+
   useEffect(() => {
     if (maxAxesMessage) {
       const timer = setTimeout(() => setMaxAxesMessage(false), 3000);
@@ -475,7 +482,7 @@ function FreakFinder() {
           const x = startX + ((sigma + 3) / 6) * graphWidth;
           const y = baselineY + metric.jitter;
           const isHovered = hoveredCardMetric === metric.formula || (hoveredPoint && Math.abs(hoveredPoint.x - x) < 2 && Math.abs(hoveredPoint.y - y) < 2);
-          const isSelected = selectedMetrics.some(sm => sm.formula === metric.formula);
+          const isSelected = forgedAxes.some(axis => axis.formula === metric.formula);
           drawMetricShape(ctx, x, y, getMetricType(metric), colors.fill, isHovered, isSelected);
           drawnMetricsRef.current.push({ x, y, formula: metric.formula, sigma: metric.sigma, value: metric.value, colorIndex, athleteId: athlete.id });
         });
@@ -540,7 +547,7 @@ function FreakFinder() {
   // Always draw bell curve, even when no athletes selected
   useEffect(() => {
     if (canvasRef.current) drawBellCurve();
-  }, [allAthletesMetrics, hoveredPoint, hoveredMetricInfo, selectedMetrics, hoveredCardMetric, hoveredAthleteColor, showPersonal, showAthletic, showForged, meZScoreFilterLow, meZScoreFilterHigh, draggingHandle]);
+  }, [allAthletesMetrics, hoveredPoint, hoveredMetricInfo, forgedAxes, hoveredCardMetric, hoveredAthleteColor, showPersonal, showAthletic, showForged, meZScoreFilterLow, meZScoreFilterHigh, draggingHandle]);
 
   const handleCanvasClick = (e) => {
     const canvas = canvasRef.current;
@@ -557,7 +564,7 @@ function FreakFinder() {
   };
 
   const toggleMetricSelection = (metric) => {
-    const alreadySelected = selectedMetrics.some(sm => sm.formula === metric.formula);
+    const alreadySelected = forgedAxes.some(axis => axis.formula === metric.formula);
     if (alreadySelected) {
       setSelectedMetrics(prev => prev.filter(sm => sm.formula !== metric.formula));
       removeForgedAxis(metric.formula);
@@ -667,7 +674,7 @@ function FreakFinder() {
       {selectedAthleteObjects.length > 0 && (
         <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#422006', borderRadius: '0.5rem', border: '2px solid #ea580c' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>✓ Selected ({selectedAthleteObjects.length})</h4>
+            <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>Selected ({selectedAthleteObjects.length})</h4>
             <button onClick={clearSelectedAthletes} style={{ padding: '0.2rem 0.4rem', background: '#7c2d12', border: '1px solid #ea580c', borderRadius: '0.25rem', color: '#fdba74', fontSize: '0.7rem', cursor: 'pointer' }}>Clear</button>
           </div>
           {selectedAthleteObjects.map((athlete, index) => {
@@ -703,7 +710,7 @@ function FreakFinder() {
         <span style={{ color: '#ef4444' }}>3-</span>
         <span style={{ color: '#ef4444' }}>2-</span>
         <span style={{ color: '#ef4444' }}>1-</span>
-        <span style={{ color: '#94a3b8' }}>±1</span>
+        <span style={{ color: '#94a3b8' }}>Â±1</span>
         <span style={{ color: '#10b981' }}>1+</span>
         <span style={{ color: '#10b981' }}>2+</span>
         <span style={{ color: '#10b981' }}>3+</span>
@@ -746,10 +753,10 @@ function FreakFinder() {
         <div style={{ padding: '0.75rem', borderBottom: '1px solid #78350f' }}>
           {allAthletesMetrics.length === 1 && (
             <div style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={() => exportAthleteToPDF(allAthletesMetrics[0].athlete, allAthletesMetrics[0].metrics, dataService.getStatistics())} style={{ padding: '0.4rem 0.8rem', background: '#ea580c', border: 'none', borderRadius: '0.375rem', color: '#fef3c7', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}>📄 Export</button>
+              <button onClick={() => exportAthleteToPDF(allAthletesMetrics[0].athlete, allAthletesMetrics[0].metrics, dataService.getStatistics())} style={{ padding: '0.4rem 0.8rem', background: '#ea580c', border: 'none', borderRadius: '0.375rem', color: '#fef3c7', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}>Export PDF</button>
             </div>
           )}
-          {maxAxesMessage && (<div style={{ marginBottom: '0.5rem', padding: '0.4rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}>⚠️ Maximum {MAX_FORGED_AXES} axes selected</div>)}
+          {maxAxesMessage && (<div style={{ marginBottom: '0.5rem', padding: '0.4rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}> Maximum {MAX_FORGED_AXES} axes selected</div>)}
           <div style={{ background: '#1e293b', padding: '0.5rem', borderRadius: '0.5rem', borderLeft: '4px solid #ea580c' }}>
             <canvas ref={canvasRef} onClick={handleCanvasClick} onMouseMove={handleCanvasHover} style={{ width: '100%', height: '280px', borderRadius: '0.375rem' }} />
             {/* Slider using context state */}
@@ -766,14 +773,14 @@ function FreakFinder() {
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showAthletic ? 1 : 0.5 }}>
                 <input type="checkbox" checked={showAthletic} onChange={() => setShowAthletic(!showAthletic)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
-                <span style={{ color: '#fb923c' }}>●</span><span style={{ color: '#a16207' }}>Standard</span>
+                <span style={{ color: '#fb923c' }}></span><span style={{ color: '#a16207' }}>Standard</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showForged ? 1 : 0.5 }}>
                 <input type="checkbox" checked={showForged} onChange={() => setShowForged(!showForged)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
                 <ForgedGlyph size="0.7rem" color="#fb923c" /><span style={{ color: '#a16207' }}>Forged</span>
               </label>
               <span style={{ color: '#78350f' }}>|</span>
-              <span style={{ color: '#fbbf24', fontSize: '0.65rem' }}>Selected: {selectedMetrics.length}/{MAX_FORGED_AXES}</span>
+              <span style={{ color: '#fbbf24', fontSize: '0.65rem' }}>Selected: {forgedAxes.length}/{MAX_FORGED_AXES}</span>
             </div>
           </div>
         </div>
@@ -782,7 +789,7 @@ function FreakFinder() {
           {allAthletesMetrics.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
               {allMetricsForCards.map((metricData, index) => {
-                const isSelected = selectedMetrics.some(sm => sm.formula === metricData.formula);
+                const isSelected = forgedAxes.some(axis => axis.formula === metricData.formula);
                 return (<MetricCard key={index} metricData={metricData} isSelected={isSelected} onClick={() => { const metric = metricData.athleteData[0]?.metric; if (metric) toggleMetricSelection(metric); }} onMouseEnter={() => setHoveredCardMetric(metricData.formula)} onMouseLeave={() => setHoveredCardMetric(null)} getSigmaColor={getSigmaColor} />);
               })}
             </div>
@@ -802,7 +809,7 @@ function MetricCard({ metricData, isSelected, onClick, onMouseEnter, onMouseLeav
   const getTypeInfo = () => {
     if (!isStandard) return { label: 'FORGED', bg: '#7c2d12', text: '#fbbf24', symbol: 'f' };
     if (PERSONAL_METRICS.includes(metricKey)) return { label: 'ATTRIBUTE', bg: '#5b21b6', text: '#c4b5fd', symbol: '▲' };
-    return { label: 'STANDARD', bg: '#374151', text: '#9ca3af', symbol: '●' };
+    return { label: 'STANDARD', bg: '#374151', text: '#9ca3af', symbol: '' };
   };
   const typeInfo = getTypeInfo();
   const sigmaToPosition = (sigma) => ((Math.max(-3, Math.min(3, sigma)) + 3) / 6) * 100;
@@ -817,7 +824,7 @@ function MetricCard({ metricData, isSelected, onClick, onMouseEnter, onMouseLeav
           <span style={{ color: typeInfo.text, fontWeight: 'bold', fontSize: '0.8rem' }}>{typeInfo.symbol}</span>
         )}
         <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#fbbf24', flex: 1 }}>{formula}</span>
-        {isSelected && <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: '600' }}>✓</span>}
+        {isSelected && <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: '600' }}></span>}
       </div>
       <div style={{ position: 'relative', height: '5px', background: '#0f172a', borderRadius: '2px', marginBottom: '0.25rem' }}>
         {[-3, -2, -1, 0, 1, 2, 3].map(s => (<div key={s} style={{ position: 'absolute', left: `${((s + 3) / 6) * 100}%`, top: '100%', transform: 'translateX(-50%)', fontSize: '0.45rem', color: '#64748b', marginTop: '1px' }}>{s === 0 ? '0' : `${s > 0 ? '+' : ''}${s}`}</div>))}
