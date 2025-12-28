@@ -285,9 +285,9 @@ function Dashboard({ mode = 'selection' }) {
     if (statisticFilter.enabled && !athletePassesStatisticFilter(athlete)) {
       const { low, high, keepOutside } = statisticFilter;
       if (keepOutside) {
-        failures.push(`No z-scores outside range [${low}σ, ${high}σ]`);
+        failures.push(`No z-scores outside range [${low}Ïƒ, ${high}Ïƒ]`);
       } else {
-        failures.push(`Some z-scores outside range [${low}σ, ${high}σ]`);
+        failures.push(`Some z-scores outside range [${low}Ïƒ, ${high}Ïƒ]`);
       }
     }
 
@@ -422,6 +422,17 @@ function Dashboard({ mode = 'selection' }) {
   };
 
   // Stacked charts update
+  // Metric units for tooltips
+  const METRIC_UNITS = {
+    'dash40': 'sec',
+    'verticalJump': 'in',
+    'broadJump': 'in',
+    'proAgility': 'sec',
+    'lDrill': 'sec',
+    'height': 'in',
+    'weight': 'lbs'
+  };
+
   const updateAthleteChart = useCallback(() => {
     if (!chartRef.current || selectedAthletes.length === 0) return;
     const ctx = chartRef.current.getContext('2d');
@@ -439,11 +450,17 @@ function Dashboard({ mode = 'selection' }) {
     const athletesToDisplay = athletes.filter(a => selectedAthletes.includes(a.id));
     const datasets = athletesToDisplay.map((athlete, index) => {
       const data = metrics.map(metric => calculateMetricData(athlete, metric, 'standard'));
+      const rawValues = metrics.map(metric => metric.isPlaceholder ? null : athlete[metric.key]);
+      const units = metrics.map(metric => metric.isPlaceholder ? '' : (METRIC_UNITS[metric.key] || ''));
       const colorIndex = index % ATHLETE_COLORS.length;
       const colors = ATHLETE_COLORS[colorIndex];
+      const initials = `${athlete.firstName.charAt(0)}${athlete.lastName.charAt(0)}`;
       return {
         label: `${athlete.firstName} ${athlete.lastName}`,
         data,
+        rawValues,
+        units,
+        initials,
         backgroundColor: colors.bg,
         borderColor: colors.border,
         borderWidth: 2,
@@ -472,7 +489,20 @@ function Dashboard({ mode = 'selection' }) {
         },
         plugins: {
           legend: { display: athletesToDisplay.length > 1, labels: { color: '#fb923c', font: { size: 12 }, padding: 10 } },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.r)}th percentile` } }
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const dataset = ctx.dataset;
+                const rawValue = dataset.rawValues?.[ctx.dataIndex];
+                const unit = dataset.units?.[ctx.dataIndex] || '';
+                const initials = dataset.initials || '';
+                const percentile = Math.round(ctx.parsed.r);
+                if (rawValue === null || rawValue === undefined) return '';
+                const valueStr = typeof rawValue === 'number' ? rawValue.toFixed(2) : rawValue;
+                return `${initials} | ${valueStr} ${unit} | %:${percentile}`;
+              }
+            }
+          }
         }
       }
     });
@@ -489,11 +519,17 @@ function Dashboard({ mode = 'selection' }) {
     const athletesToDisplay = athletes.filter(a => selectedAthletes.includes(a.id));
     const datasets = athletesToDisplay.map((athlete, index) => {
       const data = metrics.map(metric => calculateMetricData(athlete, metric, 'attribute'));
+      const rawValues = metrics.map(metric => metric.isPlaceholder ? null : athlete[metric.key]);
+      const units = metrics.map(metric => metric.isPlaceholder ? '' : (METRIC_UNITS[metric.key] || ''));
       const colorIndex = index % ATHLETE_COLORS.length;
       const colors = ATHLETE_COLORS[colorIndex];
+      const initials = `${athlete.firstName.charAt(0)}${athlete.lastName.charAt(0)}`;
       return {
         label: `${athlete.firstName} ${athlete.lastName}`,
         data,
+        rawValues,
+        units,
+        initials,
         backgroundColor: colors.bg,
         borderColor: colors.border,
         borderWidth: 2,
@@ -522,7 +558,20 @@ function Dashboard({ mode = 'selection' }) {
         },
         plugins: {
           legend: { display: athletesToDisplay.length > 1, labels: { color: '#a78bfa', font: { size: 12 }, padding: 10 } },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.r)}th percentile` } }
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const dataset = ctx.dataset;
+                const rawValue = dataset.rawValues?.[ctx.dataIndex];
+                const unit = dataset.units?.[ctx.dataIndex] || '';
+                const initials = dataset.initials || '';
+                const percentile = Math.round(ctx.parsed.r);
+                if (rawValue === null || rawValue === undefined) return '';
+                const valueStr = typeof rawValue === 'number' ? rawValue.toFixed(2) : rawValue;
+                return `${initials} | ${valueStr} ${unit} | %:${percentile}`;
+              }
+            }
+          }
         }
       }
     });
@@ -542,13 +591,46 @@ function Dashboard({ mode = 'selection' }) {
     let metrics = forgedAxes.map(axis => ({ key: axis.formula, label: axis.label }));
     metrics = arrangeForPentagon(ensureMinimumAxes(metrics, 5));
 
+    // Helper to calculate forged ratio value
+    const getForgedRawValue = (athlete, metricKey) => {
+      if (!metricKey || metricKey.startsWith('placeholder_')) return null;
+      const parts = metricKey.split(' / ');
+      if (parts.length !== 2) return null;
+      const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
+      const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
+      if (!numKey || !denKey) return null;
+      const numerator = athlete[numKey];
+      const denominator = athlete[denKey];
+      if (!numerator || !denominator || denominator === 0) return null;
+      return numerator / denominator;
+    };
+
+    // Helper to get forged unit string
+    const getForgedUnit = (metricKey) => {
+      if (!metricKey || metricKey.startsWith('placeholder_')) return '';
+      const parts = metricKey.split(' / ');
+      if (parts.length !== 2) return '';
+      const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
+      const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
+      const numUnit = METRIC_UNITS[numKey] || '';
+      const denUnit = METRIC_UNITS[denKey] || '';
+      if (numUnit && denUnit) return `${numUnit}/${denUnit}`;
+      return '';
+    };
+
     const datasets = athletesToDisplay.map((athlete, index) => {
       const data = metrics.map(metric => calculateMetricData(athlete, metric, 'forged'));
+      const rawValues = metrics.map(metric => metric.isPlaceholder ? null : getForgedRawValue(athlete, metric.key));
+      const units = metrics.map(metric => metric.isPlaceholder ? '' : getForgedUnit(metric.key));
       const colorIndex = index % ATHLETE_COLORS.length;
       const colors = ATHLETE_COLORS[colorIndex];
+      const initials = `${athlete.firstName.charAt(0)}${athlete.lastName.charAt(0)}`;
       return {
         label: `${athlete.firstName} ${athlete.lastName}`,
         data,
+        rawValues,
+        units,
+        initials,
         backgroundColor: colors.bg,
         borderColor: colors.border,
         borderWidth: 2,
@@ -577,7 +659,20 @@ function Dashboard({ mode = 'selection' }) {
         },
         plugins: {
           legend: { display: athletesToDisplay.length > 1, labels: { color: '#ef4444', font: { size: 12 }, padding: 10 } },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.r)}th percentile` } }
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const dataset = ctx.dataset;
+                const rawValue = dataset.rawValues?.[ctx.dataIndex];
+                const unit = dataset.units?.[ctx.dataIndex] || '';
+                const initials = dataset.initials || '';
+                const percentile = Math.round(ctx.parsed.r);
+                if (rawValue === null || rawValue === undefined) return '';
+                const valueStr = typeof rawValue === 'number' ? rawValue.toFixed(3) : rawValue;
+                return `${initials} | ${valueStr} ${unit} | %:${percentile}`;
+              }
+            }
+          }
         }
       }
     });
@@ -635,6 +730,40 @@ function Dashboard({ mode = 'selection' }) {
       const ctx = canvas.getContext('2d');
       const colors = ATHLETE_COLORS[colorIndex];
       const data = metrics.map(metric => calculateMetricData(athlete, metric, type));
+      const initials = `${athlete.firstName.charAt(0)}${athlete.lastName.charAt(0)}`;
+
+      // Calculate raw values based on type
+      let rawValues, units;
+      if (type === 'forged') {
+        const getForgedRawValue = (metricKey) => {
+          if (!metricKey || metricKey.startsWith('placeholder_')) return null;
+          const parts = metricKey.split(' / ');
+          if (parts.length !== 2) return null;
+          const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
+          const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
+          if (!numKey || !denKey) return null;
+          const numerator = athlete[numKey];
+          const denominator = athlete[denKey];
+          if (!numerator || !denominator || denominator === 0) return null;
+          return numerator / denominator;
+        };
+        const getForgedUnit = (metricKey) => {
+          if (!metricKey || metricKey.startsWith('placeholder_')) return '';
+          const parts = metricKey.split(' / ');
+          if (parts.length !== 2) return '';
+          const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
+          const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
+          const numUnit = METRIC_UNITS[numKey] || '';
+          const denUnit = METRIC_UNITS[denKey] || '';
+          if (numUnit && denUnit) return `${numUnit}/${denUnit}`;
+          return '';
+        };
+        rawValues = metrics.map(metric => metric.isPlaceholder ? null : getForgedRawValue(metric.key));
+        units = metrics.map(metric => metric.isPlaceholder ? '' : getForgedUnit(metric.key));
+      } else {
+        rawValues = metrics.map(metric => metric.isPlaceholder ? null : athlete[metric.key]);
+        units = metrics.map(metric => metric.isPlaceholder ? '' : (METRIC_UNITS[metric.key] || ''));
+      }
 
       isoChartInstances.current[key] = new Chart(ctx, {
         type: 'radar',
@@ -642,6 +771,9 @@ function Dashboard({ mode = 'selection' }) {
           labels: metrics.map(m => m.label),
           datasets: [{
             data,
+            rawValues,
+            units,
+            initials,
             backgroundColor: colors.bg,
             borderColor: colors.border,
             borderWidth: 2,
@@ -666,7 +798,24 @@ function Dashboard({ mode = 'selection' }) {
               }
             }
           },
-          plugins: { legend: { display: false } }
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const dataset = ctx.dataset;
+                  const rawValue = dataset.rawValues?.[ctx.dataIndex];
+                  const unit = dataset.units?.[ctx.dataIndex] || '';
+                  const initials = dataset.initials || '';
+                  const percentile = Math.round(ctx.parsed.r);
+                  if (rawValue === null || rawValue === undefined) return '';
+                  const decimals = type === 'forged' ? 3 : 2;
+                  const valueStr = typeof rawValue === 'number' ? rawValue.toFixed(decimals) : rawValue;
+                  return `${initials} | ${valueStr} ${unit} | %:${percentile}`;
+                }
+              }
+            }
+          }
         }
       });
     };
@@ -698,8 +847,11 @@ function Dashboard({ mode = 'selection' }) {
 
   const filteredAthletes = searchQuery ? dataService.searchAthletes(searchQuery) : athletes;
 
-  // Sidebar now always shows all athletes (filtered only by search)
-  const displayAthletes = filteredAthletes;
+  // Apply population filters to sidebar list (change #2)
+  const filteredPopulation = getFilteredPopulation();
+  const displayAthletes = hasActiveFilters()
+    ? filteredAthletes.filter(a => filteredPopulation.some(fp => fp.id === a.id))
+    : filteredAthletes;
   const unselectedAthletes = displayAthletes.filter(a => !selectedAthletes.includes(a.id));
 
   const calculateSigmaBands = (athlete) => {
@@ -785,14 +937,14 @@ function Dashboard({ mode = 'selection' }) {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ color: '#a78bfa', fontSize: '0.9rem' }}>🔍 Population Filters</span>
+            <span style={{ color: '#a78bfa', fontSize: '0.9rem' }}>ðŸ” Population Filters</span>
             {hasActiveFilters() && (
               <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', background: '#5b21b6', borderRadius: '0.25rem', color: '#c4b5fd' }}>
-                Active • {getFilteredPopulation().length} athletes
+                Active â€¢ {getFilteredPopulation().length} athletes
               </span>
             )}
           </div>
-          <span style={{ color: '#8b5cf6', fontSize: '1.2rem' }}>▼</span>
+          <span style={{ color: '#8b5cf6', fontSize: '1.2rem' }}>â–¼</span>
         </div>
       );
     }
@@ -809,21 +961,21 @@ function Dashboard({ mode = 'selection' }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
           <h3 style={{ fontSize: '1rem', color: '#a78bfa' }}>
-            🔍 Population Filters
+            ðŸ” Population Filters
             {hasActiveFilters() && (<span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', padding: '0.15rem 0.4rem', background: '#5b21b6', borderRadius: '0.25rem' }}>Active</span>)}
           </h3>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             {hasActiveFilters() && (
               <button onClick={clearAllFilters} style={{ padding: '0.3rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fbbf24', fontSize: '0.75rem', cursor: 'pointer' }}>Clear All</button>
             )}
-            <button style={{ padding: '0.3rem 0.6rem', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '0.25rem', color: '#93c5fd', fontSize: '0.75rem', cursor: 'pointer', opacity: 0.6 }} title="Coming soon">💾 Save Forged</button>
+            <button style={{ padding: '0.3rem 0.6rem', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '0.25rem', color: '#93c5fd', fontSize: '0.75rem', cursor: 'pointer', opacity: 0.6 }} title="Coming soon">ðŸ’¾ Save Forged</button>
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
           {/* Attributes section - now includes Position, State, Height, Weight, Grad Year */}
           <div>
-            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>▲ Attributes</h4>
+            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>â–² Attributes</h4>
             <div style={{ marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>Position</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
@@ -852,7 +1004,7 @@ function Dashboard({ mode = 'selection' }) {
 
           {/* Standard section - Height/Weight ranges */}
           <div>
-            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>● Standard</h4>
+            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>â— Standard</h4>
             <div style={{ marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>Height (in)</div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -881,7 +1033,7 @@ function Dashboard({ mode = 'selection' }) {
 
           {/* Statistics section - now last */}
           <div>
-            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>📊 Statistics</h4>
+            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>ðŸ“Š Statistics</h4>
             <div style={{ marginBottom: '0.5rem' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.75rem' }}>
                 <input
@@ -890,7 +1042,7 @@ function Dashboard({ mode = 'selection' }) {
                   onChange={() => setStatisticFilter(prev => ({ ...prev, enabled: !prev.enabled }))}
                   style={{ cursor: 'pointer', accentColor: '#fbbf24' }}
                 />
-                <span style={{ color: '#fbbf24' }}>Use σ Filtering</span>
+                <span style={{ color: '#fbbf24' }}>Use Ïƒ Filtering</span>
               </label>
             </div>
 
@@ -921,13 +1073,13 @@ function Dashboard({ mode = 'selection' }) {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: '#64748b', marginBottom: '0.5rem' }}>
-              <span>-3σ</span>
-              <span>0σ</span>
-              <span>+3σ</span>
+              <span>-3Ïƒ</span>
+              <span>0Ïƒ</span>
+              <span>+3Ïƒ</span>
             </div>
 
             <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: '0.5rem', textAlign: 'center' }}>
-              Range: [{statisticFilter.low > 0 ? '+' : ''}{statisticFilter.low}σ, {statisticFilter.high > 0 ? '+' : ''}{statisticFilter.high}σ]
+              Range: [{statisticFilter.low > 0 ? '+' : ''}{statisticFilter.low}Ïƒ, {statisticFilter.high > 0 ? '+' : ''}{statisticFilter.high}Ïƒ]
             </div>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.7rem', marginBottom: '0.5rem' }}>
@@ -939,7 +1091,7 @@ function Dashboard({ mode = 'selection' }) {
                 disabled={!statisticFilter.enabled}
               />
               <span style={{ color: '#fbbf24' }}>
-                Keep Data {statisticFilter.keepOutside ? 'Outside' : 'Inside'} Handles
+                Keep Data Inside/Outside of Handles
               </span>
             </label>
 
@@ -952,7 +1104,7 @@ function Dashboard({ mode = 'selection' }) {
                 style={{ cursor: 'pointer', accentColor: '#fbbf24' }}
               />
               <span style={{ color: recalcStatsFromFilters ? '#22c55e' : '#9ca3af' }}>
-                Recalc σ from filtered pop
+                Recalc Ïƒ from filtered pop
               </span>
             </label>
           </div>
@@ -960,7 +1112,7 @@ function Dashboard({ mode = 'selection' }) {
 
         {hasActiveFilters() && (
           <div style={{ marginTop: '0.75rem', padding: '0.5rem', background: '#0f172a', borderRadius: '0.25rem', fontSize: '0.75rem', color: '#fbbf24' }}>
-            📊 Filtered population: {getFilteredPopulation().length} athletes
+            ðŸ“Š Filtered population: {getFilteredPopulation().length} athletes
           </div>
         )}
 
@@ -982,7 +1134,7 @@ function Dashboard({ mode = 'selection' }) {
             cursor: 'pointer'
           }}
         >
-          <span style={{ color: '#1e293b', fontSize: '0.8rem', fontWeight: 'bold' }}>▲</span>
+          <span style={{ color: '#1e293b', fontSize: '0.8rem', fontWeight: 'bold' }}>â–²</span>
         </div>
       </div>
     );
@@ -996,7 +1148,7 @@ function Dashboard({ mode = 'selection' }) {
       {selectedAthleteObjects.length > 0 && (
         <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#422006', borderRadius: '0.5rem', border: '2px solid #ea580c' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>✓ Selected ({selectedAthleteObjects.length})</h4>
+            <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>âœ“ Selected ({selectedAthleteObjects.length})</h4>
             <button onClick={clearSelectedAthletes} style={{ padding: '0.2rem 0.4rem', background: '#7c2d12', border: '1px solid #ea580c', borderRadius: '0.25rem', color: '#fdba74', fontSize: '0.7rem', cursor: 'pointer' }}>Clear</button>
           </div>
           {selectedAthleteObjects.map((athlete, index) => {
@@ -1009,7 +1161,7 @@ function Dashboard({ mode = 'selection' }) {
                   <input type="checkbox" checked={true} onChange={() => toggleAthleteSelection(athlete.id)} style={{ cursor: 'pointer', accentColor: colors.border }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: '0.8rem', fontWeight: '500', color: '#fbbf24', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{athlete.firstName} {athlete.lastName}</div>
-                    <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} • {athlete.state}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} â€¢ {athlete.state}</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.35rem', fontSize: '0.65rem', fontFamily: 'monospace' }}>
@@ -1028,11 +1180,11 @@ function Dashboard({ mode = 'selection' }) {
       )}
 
       <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.65rem', color: '#a16207' }}>
-        <span style={{ fontWeight: '600' }}>σ:</span>
+        <span style={{ fontWeight: '600' }}>Ïƒ:</span>
         <span style={{ color: '#ef4444' }}>3-</span>
         <span style={{ color: '#ef4444' }}>2-</span>
         <span style={{ color: '#ef4444' }}>1-</span>
-        <span style={{ color: '#94a3b8' }}>±1</span>
+        <span style={{ color: '#94a3b8' }}>Â±1</span>
         <span style={{ color: '#10b981' }}>1+</span>
         <span style={{ color: '#10b981' }}>2+</span>
         <span style={{ color: '#10b981' }}>3+</span>
@@ -1047,7 +1199,7 @@ function Dashboard({ mode = 'selection' }) {
               <input type="checkbox" checked={selectedAthletes.includes(athlete.id)} onChange={() => toggleAthleteSelection(athlete.id)} onClick={(e) => e.stopPropagation()} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: '500', color: '#fbbf24', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{athlete.firstName} {athlete.lastName}</div>
-                <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} • {athlete.state} • {athlete.gradYear}</div>
+                <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} â€¢ {athlete.state} â€¢ {athlete.gradYear}</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.35rem', fontSize: '0.65rem', fontFamily: 'monospace' }}>
@@ -1093,7 +1245,7 @@ function Dashboard({ mode = 'selection' }) {
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#fbbf24', minWidth: '50px', textAlign: 'right' }}>{displayValue}</span>
                 <span style={{ color: sigma !== null ? (sigma > 0 ? '#10b981' : '#ef4444') : '#6b7280', fontSize: '0.85rem', minWidth: '60px', textAlign: 'left', fontFamily: 'monospace' }}>
-                  {sigma !== null ? `(${sigma > 0 ? '+' : ''}${sigma.toFixed(1)}σ)` : ''}
+                  {sigma !== null ? `(${sigma > 0 ? '+' : ''}${sigma.toFixed(1)}Ïƒ)` : ''}
                 </span>
               </div>
             </td>
@@ -1103,8 +1255,8 @@ function Dashboard({ mode = 'selection' }) {
     );
 
     return (
-      <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #ea580c' }}>
-        <h3 style={{ marginBottom: '1rem', fontSize: '1rem', color: '#fb923c' }}>📊 Athlete Comparison</h3>
+      <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #fbbf24' }}>
+        <h3 style={{ marginBottom: '1rem', fontSize: '1rem', color: '#fb923c' }}>ðŸ“Š Athlete Comparison</h3>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
@@ -1117,9 +1269,9 @@ function Dashboard({ mode = 'selection' }) {
               </tr>
             </thead>
             <tbody>
-              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>▲ Attribute Data</td></tr>
+              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>â–² Attribute Data</td></tr>
               {attributeMetrics.map(m => renderMetricRow(m, m.format))}
-              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>● Standard Data</td></tr>
+              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>â— Standard Data</td></tr>
               {standardMetrics.map(m => renderMetricRow(m))}
               <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><ForgedGlyph size="0.85rem" color="#fbbf24" /> Forged Data</td></tr>
               <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.5rem', color: '#64748b', fontSize: '0.8rem' }}>Select metrics in Metric Explorer to add forged ratios</td></tr>
@@ -1194,9 +1346,9 @@ function Dashboard({ mode = 'selection' }) {
         {selectedAthleteObjects.length > 0 ? (
           <>
             {/* Standard Radar pane */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #ea580c' }}>
+            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #fbbf24' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <h3 style={{ fontSize: '1rem', color: '#fb923c' }}>● Standard Radar</h3>
+                <h3 style={{ fontSize: '1rem', color: '#fbbf24' }}>● Standard Radar</h3>
                 <ViewModeToggle mode={standardViewMode} setMode={setStandardViewMode} />
               </div>
               {standardViewMode === 'stack' ? (
@@ -1204,7 +1356,7 @@ function Dashboard({ mode = 'selection' }) {
                   <div style={{ position: 'relative', height: '320px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ width: '400px', height: '100%' }}><canvas ref={chartRef}></canvas></div>
                   </div>
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs {athletes.length} athletes</div>
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                 </>
               ) : (
                 renderIsoCharts('standard', athletesToDisplay)
@@ -1212,9 +1364,9 @@ function Dashboard({ mode = 'selection' }) {
             </div>
 
             {/* Attribute Radar pane */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #5b21b6' }}>
+            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #fbbf24' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <h3 style={{ fontSize: '1rem', color: '#a78bfa' }}>▲ Attribute Radar</h3>
+                <h3 style={{ fontSize: '1rem', color: '#fbbf24' }}>▲ Attribute Radar</h3>
                 <ViewModeToggle mode={attributeViewMode} setMode={setAttributeViewMode} />
               </div>
               {attributeViewMode === 'stack' ? (
@@ -1222,7 +1374,7 @@ function Dashboard({ mode = 'selection' }) {
                   <div style={{ position: 'relative', height: '320px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ width: '400px', height: '100%' }}><canvas ref={physicalChartRef}></canvas></div>
                   </div>
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Physical attributes percentile</div>
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                 </>
               ) : (
                 renderIsoCharts('attribute', athletesToDisplay)
@@ -1231,10 +1383,10 @@ function Dashboard({ mode = 'selection' }) {
 
             {/* Forged Radar pane - renamed from "Forged Profile" */}
             {forgedAxes.length > 0 && (
-              <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: '4px solid #dc2626' }}>
+              <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: '4px solid #fbbf24' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <h3 style={{ fontSize: '1rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                    <ForgedGlyph size="1rem" color="#ef4444" /> Forged Radar
+                  <h3 style={{ fontSize: '1rem', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <ForgedGlyph size="1rem" color="#fbbf24" /> Forged Radar
                   </h3>
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <ViewModeToggle mode={forgedViewMode} setMode={setForgedViewMode} />
@@ -1245,14 +1397,17 @@ function Dashboard({ mode = 'selection' }) {
                   {forgedAxes.map((axis, index) => (
                     <div key={index} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0.5rem', background: '#422006', borderRadius: '1rem', fontSize: '0.7rem', color: '#fdba74', border: '1px solid #78350f' }}>
                       <span>{axis.label}</span>
-                      <button onClick={() => removeForgedAxis(axis.formula)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0', fontSize: '0.9rem', lineHeight: '1' }}>×</button>
+                      <button onClick={() => removeForgedAxis(axis.formula)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0', fontSize: '0.9rem', lineHeight: '1' }}>Ã—</button>
                     </div>
                   ))}
                 </div>
                 {forgedViewMode === 'stack' ? (
-                  <div style={{ position: 'relative', height: '280px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '400px', height: '100%' }}><canvas ref={forgedChartRef}></canvas></div>
-                  </div>
+                  <>
+                    <div style={{ position: 'relative', height: '280px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '400px', height: '100%' }}><canvas ref={forgedChartRef}></canvas></div>
+                    </div>
+                    <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
+                  </>
                 ) : (
                   renderIsoCharts('forged', athletesToDisplay)
                 )}

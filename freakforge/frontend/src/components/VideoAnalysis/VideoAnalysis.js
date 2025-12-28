@@ -51,6 +51,19 @@ const DRILL_TEMPLATES = {
   }
 };
 
+// Drill types for recording
+const DRILL_TYPES = [
+  '40-Yard Dash',
+  '5-10-5 Pro Agility',
+  'L-Drill',
+  'Vertical Jump',
+  'Broad Jump',
+  'Shuttle Run',
+  'Cone Drill',
+  'Position Drill',
+  'Other'
+];
+
 // Reusable ForgedGlyph component
 const ForgedGlyph = ({ size = '1rem', color = '#ef4444' }) => {
   const fontSize = typeof size === 'string' ? `calc(${size} * 1.2)` : `${size * 1.2}px`;
@@ -99,9 +112,37 @@ function VideoAnalysis() {
   const [totalFrames, setTotalFrames] = useState(0);
   const [fps, setFps] = useState(30); // Assumed FPS
 
+  // Recording state
+  const [isRecordingMode, setIsRecordingMode] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingStream, setRecordingStream] = useState(null);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [recordedChunks, setRecordedChunks] = useState([]);
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
+  const [recordedBlob, setRecordedBlob] = useState(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordingTimer, setRecordingTimer] = useState(null);
+
+  // Recording metadata
+  const [recordingMetadata, setRecordingMetadata] = useState({
+    firstName: '',
+    lastName: '',
+    drillType: '40-Yard Dash',
+    notes: ''
+  });
+
+  // Trim state
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [isDraggingTrim, setIsDraggingTrim] = useState(null);
+
+  // Save preferences
+  const [saveMode, setSaveMode] = useState('individual'); // 'individual' or 'default'
+  const [defaultSavePath, setDefaultSavePath] = useState('');
+
   // Calibration state
   const [selectedDrill, setSelectedDrill] = useState('custom');
-  const [calibrationMode, setCalibrationMode] = useState('line'); // line, cones-3, l-drill, grid
+  const [calibrationMode, setCalibrationMode] = useState('line');
   const [calibrationMarkers, setCalibrationMarkers] = useState([]);
   const [activeMarkerIndex, setActiveMarkerIndex] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -122,6 +163,7 @@ function VideoAnalysis() {
 
   // Refs
   const videoRef = useRef(null);
+  const recordingVideoRef = useRef(null);
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const speedChartRef = useRef(null);
@@ -131,6 +173,7 @@ function VideoAnalysis() {
   const accelChartInstance = useRef(null);
   const powerChartInstance = useRef(null);
   const fileInputRef = useRef(null);
+  const trimSliderRef = useRef(null);
 
   // Context
   const {
@@ -152,6 +195,18 @@ function VideoAnalysis() {
     });
   }, []);
 
+  // Cleanup recording stream on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingStream) {
+        recordingStream.getTracks().forEach(track => track.stop());
+      }
+      if (recordedVideoUrl) {
+        URL.revokeObjectURL(recordedVideoUrl);
+      }
+    };
+  }, [recordingStream, recordedVideoUrl]);
+
   // Get selected athlete object
   const selectedAthleteObjects = athletes.filter(a => selectedAthletes.includes(a.id));
   const primaryAthlete = selectedAthleteObjects.length > 0 ? selectedAthleteObjects[0] : null;
@@ -162,6 +217,136 @@ function VideoAnalysis() {
     if (primaryAthlete) return primaryAthlete.weight;
     if (manualAthlete.weight) return parseFloat(manualAthlete.weight);
     return null;
+  };
+
+  // Start webcam for recording
+  const startRecordingMode = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720, facingMode: 'environment' },
+        audio: true
+      });
+      setRecordingStream(stream);
+      setIsRecordingMode(true);
+      setVideoError('');
+
+      // Set video element source
+      if (recordingVideoRef.current) {
+        recordingVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      setVideoError(`Camera access denied: ${err.message}. Please allow camera access to record videos.`);
+    }
+  };
+
+  // Stop recording mode
+  const stopRecordingMode = () => {
+    if (recordingStream) {
+      recordingStream.getTracks().forEach(track => track.stop());
+    }
+    setRecordingStream(null);
+    setIsRecordingMode(false);
+    setIsRecording(false);
+    if (recordingTimer) {
+      clearInterval(recordingTimer);
+      setRecordingTimer(null);
+    }
+  };
+
+  // Start recording
+  const startRecording = () => {
+    if (!recordingStream) return;
+
+    const chunks = [];
+    const recorder = new MediaRecorder(recordingStream, { mimeType: 'video/webm' });
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      setRecordedBlob(blob);
+      setRecordedVideoUrl(url);
+      setRecordedChunks(chunks);
+      setTrimStart(0);
+      setTrimEnd(recordingDuration);
+      stopRecordingMode();
+    };
+
+    setMediaRecorder(recorder);
+    setRecordedChunks([]);
+    setRecordingDuration(0);
+    recorder.start(100); // Collect data every 100ms
+    setIsRecording(true);
+
+    // Start duration timer
+    const startTime = Date.now();
+    const timer = setInterval(() => {
+      setRecordingDuration(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    setRecordingTimer(timer);
+  };
+
+  // Stop recording
+  const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+    if (recordingTimer) {
+      clearInterval(recordingTimer);
+      setRecordingTimer(null);
+    }
+    setIsRecording(false);
+  };
+
+  // Generate filename
+  const generateFilename = () => {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, ''); // hhmmss
+    const lastName = recordingMetadata.lastName.trim() || 'unknown';
+    const firstName = recordingMetadata.firstName.trim() || 'athlete';
+    return `${dateStr} ${timeStr} ${lastName}_${firstName}`;
+  };
+
+  // Save video with trimming
+  const saveRecordedVideo = async () => {
+    if (!recordedBlob) return;
+
+    const filename = generateFilename() + '.webm';
+
+    // Create a download link
+    const a = document.createElement('a');
+    a.href = recordedVideoUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  // Use recorded video for analysis
+  const useRecordedVideo = () => {
+    if (recordedVideoUrl) {
+      setVideoSource(recordedVideoUrl);
+      setRecordedVideoUrl(null);
+      setRecordedBlob(null);
+    }
+  };
+
+  // Discard recorded video
+  const discardRecordedVideo = () => {
+    if (recordedVideoUrl) {
+      URL.revokeObjectURL(recordedVideoUrl);
+    }
+    setRecordedVideoUrl(null);
+    setRecordedBlob(null);
+    setRecordedChunks([]);
+    setTrimStart(0);
+    setTrimEnd(0);
   };
 
   // Handle video file upload
@@ -175,30 +360,25 @@ function VideoAnalysis() {
     }
   };
 
-  // Handle URL input (YouTube, Hudl, direct links)
+  // Handle URL input
   const handleUrlSubmit = () => {
     if (!videoUrl.trim()) return;
 
     let embedUrl = videoUrl;
 
-    // YouTube URL conversion
     if (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) {
       const videoId = extractYouTubeId(videoUrl);
       if (videoId) {
-        // Note: Direct video playback from YouTube requires their iframe API
-        // For now, we'll show an info message
         setVideoError('YouTube videos require download first. Use a tool like yt-dlp to download, then upload the file.');
         return;
       }
     }
 
-    // Hudl URL - similar limitation
     if (videoUrl.includes('hudl.com')) {
       setVideoError('Hudl videos require download first. Use Hudl\'s download feature, then upload the file.');
       return;
     }
 
-    // Try direct URL
     setVideoSource(embedUrl);
     setVideoError('');
     resetAnalysis();
@@ -289,7 +469,6 @@ function VideoAnalysis() {
       return;
     }
 
-    // Determine max markers based on calibration mode
     const maxMarkers = {
       'line': 2,
       'cones-3': 3,
@@ -337,7 +516,6 @@ function VideoAnalysis() {
     const distance = parseFloat(calibrationDistance);
     if (isNaN(distance) || distance <= 0) return;
 
-    // Calculate pixel distance between first two markers
     const dx = calibrationMarkers[1].x - calibrationMarkers[0].x;
     const dy = calibrationMarkers[1].y - calibrationMarkers[0].y;
     const pixelDistance = Math.sqrt(dx * dx + dy * dy);
@@ -356,47 +534,38 @@ function VideoAnalysis() {
     const frames = [];
     const frameCount = totalFrames;
 
-    // Simulate frame-by-frame AI tracking
     for (let i = 0; i < frameCount; i++) {
-      await new Promise(resolve => setTimeout(resolve, 10)); // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 10));
 
-      // Simulated player position with realistic movement pattern
       const t = i / fps;
       const progress = i / frameCount;
 
-      // Simulate acceleration phase, max velocity, deceleration
       let velocity;
       if (progress < 0.3) {
-        // Acceleration phase
-        velocity = 8 * (progress / 0.3); // Accelerate to ~8 yd/s
+        velocity = 8 * (progress / 0.3);
       } else if (progress < 0.7) {
-        // Max velocity phase
-        velocity = 8 + Math.sin(progress * 10) * 0.5; // Slight variation
+        velocity = 8 + Math.sin(progress * 10) * 0.5;
       } else {
-        // Deceleration
         velocity = 8 * (1 - (progress - 0.7) / 0.3);
       }
 
-      // Add some noise
       velocity += (Math.random() - 0.5) * 0.5;
       velocity = Math.max(0, velocity);
 
-      // Calculate position based on velocity
       const prevPosition = frames.length > 0 ? frames[frames.length - 1].position : 0;
       const position = prevPosition + (velocity / fps);
 
-      // Calculate acceleration
       const prevVelocity = frames.length > 0 ? frames[frames.length - 1].velocity : 0;
       const acceleration = (velocity - prevVelocity) * fps;
 
       frames.push({
         frame: i,
         time: t,
-        position, // yards from start
-        velocity, // yards per second
-        velocityMph: velocity * 2.045, // Convert to MPH
-        acceleration, // yards per second squared
-        accelerationG: acceleration / 32.2 * 3, // Approximate g-force
+        position,
+        velocity,
+        velocityMph: velocity * 2.045,
+        acceleration,
+        accelerationG: acceleration / 32.2 * 3,
       });
 
       setProcessingProgress(Math.round((i / frameCount) * 100));
@@ -404,23 +573,20 @@ function VideoAnalysis() {
 
     setTrackingData(frames);
 
-    // Calculate summary statistics
     const weight = getEffectiveWeight();
     const maxVelocity = Math.max(...frames.map(f => f.velocity));
     const maxAcceleration = Math.max(...frames.map(f => Math.abs(f.acceleration)));
     const avgVelocity = frames.reduce((sum, f) => sum + f.velocity, 0) / frames.length;
 
-    // Power calculation: P = F * v = m * a * v
     const powerData = frames.map(f => {
       if (!weight) return { ...f, power: null };
-      const force = (weight / 32.2) * f.acceleration * 3; // Convert to lbs force (rough)
-      const power = Math.abs(force * f.velocity * 1.356); // Watts (rough conversion)
+      const force = (weight / 32.2) * f.acceleration * 3;
+      const power = Math.abs(force * f.velocity * 1.356);
       return { ...f, power };
     });
 
     const maxPower = weight ? Math.max(...powerData.filter(f => f.power !== null).map(f => f.power)) : null;
 
-    // Time splits (for 40-yard dash)
     const splits = {};
     [10, 20, 30, 40].forEach(yard => {
       const frame = frames.find(f => f.position >= yard);
@@ -459,31 +625,26 @@ function VideoAnalysis() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw calibration lines/shapes
     if (calibrationMarkers.length > 0) {
       ctx.strokeStyle = '#22c55e';
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
 
-      // Draw lines between markers
       ctx.beginPath();
       calibrationMarkers.forEach((marker, i) => {
         if (i === 0) ctx.moveTo(marker.x, marker.y);
         else ctx.lineTo(marker.x, marker.y);
       });
 
-      // Close shape for grid/l-drill
       if ((calibrationMode === 'grid' || calibrationMode === 'l-drill') && calibrationMarkers.length > 2) {
         ctx.lineTo(calibrationMarkers[0].x, calibrationMarkers[0].y);
       }
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw markers
       calibrationMarkers.forEach((marker, i) => {
         const isActive = i === activeMarkerIndex;
 
-        // Outer circle
         ctx.beginPath();
         ctx.arc(marker.x, marker.y, isActive ? 14 : 12, 0, Math.PI * 2);
         ctx.fillStyle = isActive ? 'rgba(34, 197, 94, 0.8)' : 'rgba(34, 197, 94, 0.5)';
@@ -492,7 +653,6 @@ function VideoAnalysis() {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Label
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 10px sans-serif';
         ctx.textAlign = 'center';
@@ -501,7 +661,6 @@ function VideoAnalysis() {
       });
     }
 
-    // Draw player marker
     if (playerMarker) {
       ctx.beginPath();
       ctx.arc(playerMarker.x, playerMarker.y, 15, 0, Math.PI * 2);
@@ -511,7 +670,6 @@ function VideoAnalysis() {
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // Helmet icon
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
@@ -519,7 +677,6 @@ function VideoAnalysis() {
       ctx.fillText('🏈', playerMarker.x, playerMarker.y);
     }
 
-    // Draw tracking path if available
     if (trackingData.length > 0 && analysisResults) {
       const startX = playerMarker?.x || 100;
       const startY = playerMarker?.y || 200;
@@ -549,7 +706,6 @@ function VideoAnalysis() {
     const { frames } = analysisResults;
     const labels = frames.map(f => f.time.toFixed(2));
 
-    // Speed chart
     if (speedChartRef.current) {
       if (speedChartInstance.current) speedChartInstance.current.destroy();
       speedChartInstance.current = new Chart(speedChartRef.current, {
@@ -577,7 +733,6 @@ function VideoAnalysis() {
       });
     }
 
-    // Acceleration chart
     if (accelChartRef.current) {
       if (accelChartInstance.current) accelChartInstance.current.destroy();
       accelChartInstance.current = new Chart(accelChartRef.current, {
@@ -605,7 +760,6 @@ function VideoAnalysis() {
       });
     }
 
-    // Power chart
     if (powerChartRef.current && frames[0]?.power !== null) {
       if (powerChartInstance.current) powerChartInstance.current.destroy();
       powerChartInstance.current = new Chart(powerChartRef.current, {
@@ -660,9 +814,44 @@ function VideoAnalysis() {
   // Save results to athlete
   const saveToAthlete = () => {
     if (!primaryAthlete || !analysisResults) return;
-
-    // In a real app, this would update the database
     alert(`Results saved to ${primaryAthlete.firstName} ${primaryAthlete.lastName}'s profile!\n\nMax Speed: ${analysisResults.summary.maxVelocityMph.toFixed(1)} MPH\n40-Yard Time: ${analysisResults.summary.splits[40]?.toFixed(2) || 'N/A'}s`);
+  };
+
+  // Trim slider handlers
+  const handleTrimDrag = (handle, e) => {
+    if (!trimSliderRef.current || !recordedBlob) return;
+    e.preventDefault();
+    setIsDraggingTrim(handle);
+
+    const rect = trimSliderRef.current.getBoundingClientRect();
+
+    const onMouseMove = (moveEvent) => {
+      const x = moveEvent.clientX - rect.left;
+      const percent = Math.max(0, Math.min(1, x / rect.width));
+      const time = percent * recordingDuration;
+
+      if (handle === 'start') {
+        if (time < trimEnd) setTrimStart(time);
+      } else {
+        if (time > trimStart) setTrimEnd(time);
+      }
+    };
+
+    const onMouseUp = () => {
+      setIsDraggingTrim(null);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Format duration for display
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Render sidebar
@@ -677,7 +866,6 @@ function VideoAnalysis() {
         style={{ width: '100%', padding: '0.4rem', marginBottom: '0.75rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.85rem' }}
       />
 
-      {/* Selected athlete for analysis */}
       {primaryAthlete && (
         <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#422006', borderRadius: '0.5rem', border: '2px solid #ea580c' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
@@ -693,7 +881,6 @@ function VideoAnalysis() {
             </div>
           </div>
 
-          {/* Weight override */}
           <div style={{ marginTop: '0.5rem' }}>
             <label style={{ fontSize: '0.7rem', color: '#a16207' }}>Weight Override (for power calc)</label>
             <input
@@ -707,7 +894,6 @@ function VideoAnalysis() {
         </div>
       )}
 
-      {/* Manual athlete entry if none selected */}
       {!primaryAthlete && (
         <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#1e3a5f', borderRadius: '0.5rem', border: '2px solid #3b82f6' }}>
           <h4 style={{ fontSize: '0.85rem', color: '#93c5fd', fontWeight: '600', marginBottom: '0.5rem' }}>📝 Manual Entry</h4>
@@ -790,59 +976,336 @@ function VideoAnalysis() {
     </div>
   );
 
+  // Render Recording Mode UI
+  const renderRecordingMode = () => (
+    <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #ef4444' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <h3 style={{ fontSize: '1rem', color: '#ef4444' }}>🎥 Recording Mode</h3>
+        <button
+          onClick={stopRecordingMode}
+          style={{ padding: '0.4rem 0.8rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.85rem' }}
+        >
+          ✕ Exit Recording
+        </button>
+      </div>
+
+      {/* Recording Metadata */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+        <div>
+          <label style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'block', marginBottom: '0.25rem' }}>First Name</label>
+          <input
+            type="text"
+            value={recordingMetadata.firstName}
+            onChange={(e) => setRecordingMetadata(prev => ({ ...prev, firstName: e.target.value }))}
+            style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.85rem' }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'block', marginBottom: '0.25rem' }}>Last Name</label>
+          <input
+            type="text"
+            value={recordingMetadata.lastName}
+            onChange={(e) => setRecordingMetadata(prev => ({ ...prev, lastName: e.target.value }))}
+            style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.85rem' }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'block', marginBottom: '0.25rem' }}>Drill Type</label>
+          <select
+            value={recordingMetadata.drillType}
+            onChange={(e) => setRecordingMetadata(prev => ({ ...prev, drillType: e.target.value }))}
+            style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.85rem' }}
+          >
+            {DRILL_TYPES.map(drill => (
+              <option key={drill} value={drill}>{drill}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'block', marginBottom: '0.25rem' }}>Notes (optional)</label>
+        <textarea
+          value={recordingMetadata.notes}
+          onChange={(e) => setRecordingMetadata(prev => ({ ...prev, notes: e.target.value }))}
+          placeholder="Any additional notes..."
+          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.85rem', resize: 'vertical', minHeight: '60px' }}
+        />
+      </div>
+
+      {/* Live Video Preview */}
+      <div style={{ position: 'relative', background: '#000', borderRadius: '0.375rem', overflow: 'hidden', marginBottom: '1rem' }}>
+        <video
+          ref={recordingVideoRef}
+          autoPlay
+          muted
+          playsInline
+          style={{ width: '100%', display: 'block' }}
+        />
+        {isRecording && (
+          <div style={{ position: 'absolute', top: '1rem', right: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(220, 38, 38, 0.9)', padding: '0.4rem 0.8rem', borderRadius: '0.375rem' }}>
+            <span style={{ width: '12px', height: '12px', background: '#ffffff', borderRadius: '50%', animation: 'pulse 1s infinite' }}></span>
+            <span style={{ color: '#ffffff', fontWeight: '600', fontSize: '0.9rem' }}>REC {formatDuration(recordingDuration)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Recording Controls */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+        {!isRecording ? (
+          <button
+            onClick={startRecording}
+            style={{ padding: '0.75rem 2rem', background: '#dc2626', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontWeight: '700', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <span style={{ width: '16px', height: '16px', background: '#ffffff', borderRadius: '50%' }}></span>
+            Start Recording
+          </button>
+        ) : (
+          <button
+            onClick={stopRecording}
+            style={{ padding: '0.75rem 2rem', background: '#374151', border: '2px solid #dc2626', borderRadius: '0.5rem', color: '#ef4444', cursor: 'pointer', fontWeight: '700', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <span style={{ width: '16px', height: '16px', background: '#ef4444', borderRadius: '0' }}></span>
+            Stop Recording
+          </button>
+        )}
+      </div>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
+    </div>
+  );
+
+  // Render Recorded Video Review
+  const renderRecordedVideoReview = () => (
+    <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #22c55e' }}>
+      <h3 style={{ fontSize: '1rem', color: '#22c55e', marginBottom: '0.75rem' }}>📼 Review Recording</h3>
+
+      {/* Video Preview */}
+      <div style={{ background: '#000', borderRadius: '0.375rem', overflow: 'hidden', marginBottom: '1rem' }}>
+        <video
+          src={recordedVideoUrl}
+          controls
+          style={{ width: '100%', display: 'block' }}
+        />
+      </div>
+
+      {/* Trim Controls */}
+      <div style={{ marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <span style={{ fontSize: '0.85rem', color: '#9ca3af' }}>Trim Video</span>
+          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+            {formatDuration(trimStart)} - {formatDuration(trimEnd)} (Duration: {formatDuration(trimEnd - trimStart)})
+          </span>
+        </div>
+
+        {/* Visual Timeline Scrubber */}
+        <div
+          ref={trimSliderRef}
+          style={{ position: 'relative', height: '40px', background: '#0f172a', borderRadius: '0.375rem', cursor: 'pointer' }}
+        >
+          {/* Full duration track */}
+          <div style={{ position: 'absolute', top: '16px', left: '0', right: '0', height: '8px', background: '#374151', borderRadius: '4px' }}></div>
+
+          {/* Selected range */}
+          <div style={{
+            position: 'absolute',
+            top: '16px',
+            left: `${(trimStart / recordingDuration) * 100}%`,
+            width: `${((trimEnd - trimStart) / recordingDuration) * 100}%`,
+            height: '8px',
+            background: '#22c55e',
+            borderRadius: '4px'
+          }}></div>
+
+          {/* Start handle */}
+          <div
+            onMouseDown={(e) => handleTrimDrag('start', e)}
+            style={{
+              position: 'absolute',
+              left: `${(trimStart / recordingDuration) * 100}%`,
+              top: '8px',
+              width: '20px',
+              height: '24px',
+              background: isDraggingTrim === 'start' ? '#4ade80' : '#22c55e',
+              borderRadius: '4px',
+              transform: 'translateX(-50%)',
+              cursor: 'ew-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '2px solid #ffffff'
+            }}
+          >
+            <span style={{ fontSize: '0.6rem', color: '#ffffff', fontWeight: 'bold' }}>◀</span>
+          </div>
+
+          {/* End handle */}
+          <div
+            onMouseDown={(e) => handleTrimDrag('end', e)}
+            style={{
+              position: 'absolute',
+              left: `${(trimEnd / recordingDuration) * 100}%`,
+              top: '8px',
+              width: '20px',
+              height: '24px',
+              background: isDraggingTrim === 'end' ? '#4ade80' : '#22c55e',
+              borderRadius: '4px',
+              transform: 'translateX(-50%)',
+              cursor: 'ew-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '2px solid #ffffff'
+            }}
+          >
+            <span style={{ fontSize: '0.6rem', color: '#ffffff', fontWeight: 'bold' }}>▶</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Save Options */}
+      <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#0f172a', borderRadius: '0.375rem' }}>
+        <div style={{ marginBottom: '0.5rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginBottom: '0.4rem' }}>
+            <input
+              type="radio"
+              name="saveMode"
+              checked={saveMode === 'individual'}
+              onChange={() => setSaveMode('individual')}
+              style={{ accentColor: '#22c55e' }}
+            />
+            <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Choose save location each time</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="saveMode"
+              checked={saveMode === 'default'}
+              onChange={() => setSaveMode('default')}
+              style={{ accentColor: '#22c55e' }}
+            />
+            <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Use default save location</span>
+          </label>
+        </div>
+
+        {saveMode === 'default' && (
+          <div style={{ marginTop: '0.5rem' }}>
+            <input
+              type="text"
+              placeholder="Enter default folder path (e.g., C:\Videos\Drills)"
+              value={defaultSavePath}
+              onChange={(e) => setDefaultSavePath(e.target.value)}
+              style={{ width: '100%', padding: '0.4rem', background: '#1e293b', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}
+            />
+            <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.25rem' }}>
+              Note: Browser security may still prompt for confirmation
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#64748b' }}>
+          Filename preview: <span style={{ color: '#fbbf24' }}>{generateFilename()}.webm</span>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+        <button
+          onClick={discardRecordedVideo}
+          style={{ padding: '0.6rem 1.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', cursor: 'pointer', fontWeight: '600' }}
+        >
+          🗑️ Discard
+        </button>
+        <button
+          onClick={saveRecordedVideo}
+          style={{ padding: '0.6rem 1.5rem', background: '#166534', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+        >
+          💾 Save Video
+        </button>
+        <button
+          onClick={useRecordedVideo}
+          style={{ padding: '0.6rem 1.5rem', background: '#3b82f6', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+        >
+          📊 Analyze Video
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       {renderSidebar()}
 
       <div style={{ flex: 1, padding: '1rem', overflowY: 'auto' }}>
-        {/* Video Upload Section */}
-        <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #3b82f6' }}>
-          <h3 style={{ fontSize: '1rem', color: '#93c5fd', marginBottom: '0.75rem' }}>📹 Video Source</h3>
+        {/* Recording Mode */}
+        {isRecordingMode && renderRecordingMode()}
 
-          <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
-            {/* File Upload */}
-            <div style={{ flex: 1 }}>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="video/*"
-                onChange={handleFileUpload}
-                style={{ display: 'none' }}
-              />
+        {/* Recorded Video Review */}
+        {recordedVideoUrl && !isRecordingMode && renderRecordedVideoReview()}
+
+        {/* Video Upload Section - only show when not in recording mode */}
+        {!isRecordingMode && !recordedVideoUrl && (
+          <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #3b82f6' }}>
+            <h3 style={{ fontSize: '1rem', color: '#93c5fd', marginBottom: '0.75rem' }}>📹 Video Source</h3>
+
+            <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
+              {/* Record Button */}
               <button
-                onClick={() => fileInputRef.current?.click()}
-                style={{ width: '100%', padding: '0.75rem', background: '#1e3a5f', border: '2px dashed #3b82f6', borderRadius: '0.5rem', color: '#93c5fd', cursor: 'pointer', fontSize: '0.9rem' }}
+                onClick={startRecordingMode}
+                style={{ padding: '0.75rem 1rem', background: '#dc2626', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
-                📁 Upload Video File
+                🎥 Record Video
               </button>
+
+              {/* File Upload */}
+              <div style={{ flex: 1 }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={handleFileUpload}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ width: '100%', padding: '0.75rem', background: '#1e3a5f', border: '2px dashed #3b82f6', borderRadius: '0.5rem', color: '#93c5fd', cursor: 'pointer', fontSize: '0.9rem' }}
+                >
+                  📁 Upload Video File
+                </button>
+              </div>
+
+              {/* URL Input */}
+              <div style={{ flex: 2, display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  placeholder="Paste video URL (direct link, YouTube, Hudl)"
+                  value={videoUrl}
+                  onChange={(e) => setVideoUrl(e.target.value)}
+                  style={{ flex: 1, padding: '0.5rem', background: '#0f172a', border: '1px solid #3b82f6', borderRadius: '0.375rem', color: '#93c5fd', fontSize: '0.85rem' }}
+                />
+                <button
+                  onClick={handleUrlSubmit}
+                  style={{ padding: '0.5rem 1rem', background: '#3b82f6', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  Load
+                </button>
+              </div>
             </div>
 
-            {/* URL Input */}
-            <div style={{ flex: 2, display: 'flex', gap: '0.5rem' }}>
-              <input
-                type="text"
-                placeholder="Paste video URL (direct link, YouTube, Hudl)"
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
-                style={{ flex: 1, padding: '0.5rem', background: '#0f172a', border: '1px solid #3b82f6', borderRadius: '0.375rem', color: '#93c5fd', fontSize: '0.85rem' }}
-              />
-              <button
-                onClick={handleUrlSubmit}
-                style={{ padding: '0.5rem 1rem', background: '#3b82f6', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
-              >
-                Load
-              </button>
-            </div>
+            {videoError && (
+              <div style={{ padding: '0.5rem', background: '#7c2d12', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}>
+                ⚠️ {videoError}
+              </div>
+            )}
           </div>
+        )}
 
-          {videoError && (
-            <div style={{ padding: '0.5rem', background: '#7c2d12', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}>
-              ⚠️ {videoError}
-            </div>
-          )}
-        </div>
-
-        {/* Video Player & Calibration */}
+        {/* Video Player & Calibration - rest of the existing code */}
         {videoSource && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
@@ -895,19 +1358,14 @@ function VideoAnalysis() {
                   <button onClick={() => stepFrame(1)} style={{ padding: '0.4rem 0.6rem', background: '#374151', border: 'none', borderRadius: '0.25rem', color: '#9ca3af', cursor: 'pointer' }}>+1 ▶</button>
                   <button onClick={() => stepFrame(10)} style={{ padding: '0.4rem 0.6rem', background: '#374151', border: 'none', borderRadius: '0.25rem', color: '#9ca3af', cursor: 'pointer' }}>+10 ⏩</button>
 
-                  {/* Time slider */}
                   <input
                     type="range"
-                    min={0}
+                    min="0"
                     max={totalFrames}
                     value={currentFrame}
                     onChange={(e) => seekToFrame(parseInt(e.target.value))}
                     style={{ flex: 1, accentColor: '#ea580c' }}
                   />
-
-                  <span style={{ fontSize: '0.75rem', color: '#a16207', minWidth: '60px' }}>
-                    {currentTime.toFixed(2)}s
-                  </span>
                 </div>
               </div>
 
@@ -915,9 +1373,8 @@ function VideoAnalysis() {
               <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: '4px solid #22c55e' }}>
                 <h3 style={{ fontSize: '1rem', color: '#22c55e', marginBottom: '0.75rem' }}>📐 Calibration</h3>
 
-                {/* Drill Template Selection */}
                 <div style={{ marginBottom: '0.75rem' }}>
-                  <label style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'block', marginBottom: '0.25rem' }}>Drill Template</label>
+                  <label style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '0.25rem', display: 'block' }}>Drill Template</label>
                   <select
                     value={selectedDrill}
                     onChange={(e) => handleDrillSelect(e.target.value)}
@@ -927,138 +1384,89 @@ function VideoAnalysis() {
                       <option key={key} value={key}>{drill.name}</option>
                     ))}
                   </select>
-                  <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.25rem' }}>
-                    {DRILL_TEMPLATES[selectedDrill].description}
-                  </div>
                 </div>
 
-                {/* Calibration Distance */}
+                <div style={{ marginBottom: '0.75rem', padding: '0.5rem', background: '#0f172a', borderRadius: '0.375rem', fontSize: '0.75rem', color: '#64748b' }}>
+                  {DRILL_TEMPLATES[selectedDrill].description}
+                </div>
+
                 <div style={{ marginBottom: '0.75rem' }}>
-                  <label style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'block', marginBottom: '0.25rem' }}>Distance (yards)</label>
+                  <label style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '0.25rem', display: 'block' }}>Distance (yards)</label>
                   <input
                     type="number"
                     value={calibrationDistance}
                     onChange={(e) => setCalibrationDistance(e.target.value)}
-                    placeholder="Enter distance between first 2 markers"
+                    placeholder="Enter distance"
                     style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #22c55e', borderRadius: '0.375rem', color: '#22c55e', fontSize: '0.85rem' }}
                   />
                 </div>
 
-                {/* Markers Status */}
-                <div style={{ marginBottom: '0.75rem', padding: '0.5rem', background: '#0f172a', borderRadius: '0.375rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>Calibration Points</div>
-                  {DRILL_TEMPLATES[selectedDrill].markers?.map((label, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                      <span style={{
-                        width: '18px',
-                        height: '18px',
-                        borderRadius: '50%',
-                        background: calibrationMarkers[i] ? '#22c55e' : '#374151',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.6rem',
-                        color: '#fff'
-                      }}>
-                        {i + 1}
-                      </span>
-                      <span style={{ fontSize: '0.75rem', color: calibrationMarkers[i] ? '#22c55e' : '#64748b' }}>
-                        {label} {calibrationMarkers[i] ? '✓' : '(click video)'}
-                      </span>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '0.25rem' }}>
+                    Markers: {calibrationMarkers.length} / {calibrationMode === 'grid' ? 4 : calibrationMode === 'cones-3' || calibrationMode === 'l-drill' ? 3 : 2}
+                  </div>
+                  {calibrationMarkers.map((marker, i) => (
+                    <div key={i} style={{ fontSize: '0.75rem', color: '#22c55e', padding: '0.2rem 0' }}>
+                      ✓ {marker.label}: ({Math.round(marker.x)}, {Math.round(marker.y)})
                     </div>
-                  )) || (
-                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                      Click on video to place {2 - calibrationMarkers.length} point(s)
-                    </div>
-                  )}
+                  ))}
                 </div>
 
-                {/* Calibrate Button */}
-                <button
-                  onClick={calculateCalibration}
-                  disabled={calibrationMarkers.length < 2 || !calibrationDistance}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    background: isCalibrated ? '#166534' : (calibrationMarkers.length >= 2 && calibrationDistance ? '#22c55e' : '#374151'),
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    color: '#ffffff',
-                    cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed',
-                    fontWeight: '600',
-                    marginBottom: '0.5rem'
-                  }}
-                >
-                  {isCalibrated ? '✓ Calibrated' : 'Apply Calibration'}
-                </button>
-
-                {isCalibrated && (
-                  <div style={{ fontSize: '0.7rem', color: '#22c55e', textAlign: 'center' }}>
-                    Scale: {pixelsPerYard?.toFixed(1)} px/yard
-                  </div>
-                )}
-
-                {/* Clear Markers */}
-                {calibrationMarkers.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
-                    onClick={() => { setCalibrationMarkers([]); setIsCalibrated(false); }}
-                    style={{ width: '100%', padding: '0.4rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.8rem', marginTop: '0.5rem' }}
+                    onClick={() => setCalibrationMarkers([])}
+                    style={{ flex: 1, padding: '0.4rem', background: '#374151', border: 'none', borderRadius: '0.375rem', color: '#9ca3af', cursor: 'pointer', fontSize: '0.8rem' }}
                   >
                     Clear Markers
                   </button>
+                  <button
+                    onClick={calculateCalibration}
+                    disabled={calibrationMarkers.length < 2 || !calibrationDistance}
+                    style={{ flex: 1, padding: '0.4rem', background: isCalibrated ? '#166534' : '#22c55e', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600', opacity: (calibrationMarkers.length < 2 || !calibrationDistance) ? 0.5 : 1 }}
+                  >
+                    {isCalibrated ? '✓ Calibrated' : 'Calibrate'}
+                  </button>
+                </div>
+
+                {isCalibrated && (
+                  <div style={{ marginTop: '0.75rem', padding: '0.5rem', background: '#166534', borderRadius: '0.375rem', fontSize: '0.8rem', color: '#ffffff' }}>
+                    Scale: {pixelsPerYard?.toFixed(2)} px/yard
+                  </div>
                 )}
               </div>
             </div>
 
-            {/* Player Tracking Section */}
+            {/* Player Tracking */}
             <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #ef4444' }}>
               <h3 style={{ fontSize: '1rem', color: '#ef4444', marginBottom: '0.75rem' }}>🏈 Player Tracking</h3>
 
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                 <button
                   onClick={() => setIsPlacingPlayer(true)}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: isPlacingPlayer ? '#fbbf24' : (playerMarker ? '#166534' : '#ef4444'),
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    color: isPlacingPlayer ? '#000' : '#ffffff',
-                    cursor: 'pointer',
-                    fontWeight: '600'
-                  }}
+                  disabled={!isCalibrated}
+                  style={{ padding: '0.5rem 1rem', background: isPlacingPlayer ? '#ef4444' : '#7c2d12', border: '1px solid #ef4444', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600', opacity: !isCalibrated ? 0.5 : 1 }}
                 >
-                  {isPlacingPlayer ? '👆 Click on Player Helmet' : (playerMarker ? '✓ Player Marked' : '🎯 Mark Player')}
+                  {isPlacingPlayer ? '👆 Click on player...' : '📍 Place Player Marker'}
                 </button>
 
                 {playerMarker && (
-                  <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                    Marked at frame {playerMarker.frame}
+                  <span style={{ fontSize: '0.85rem', color: '#ef4444' }}>
+                    Player at ({Math.round(playerMarker.x)}, {Math.round(playerMarker.y)})
                   </span>
                 )}
 
-                <div style={{ flex: 1 }} />
-
                 <button
                   onClick={processVideo}
-                  disabled={!isCalibrated || !playerMarker || isProcessing}
-                  style={{
-                    padding: '0.6rem 1.5rem',
-                    background: isProcessing ? '#374151' : (!isCalibrated || !playerMarker ? '#374151' : '#3b82f6'),
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    color: '#ffffff',
-                    cursor: !isCalibrated || !playerMarker || isProcessing ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '1rem'
-                  }}
+                  disabled={!playerMarker || !isCalibrated || isProcessing}
+                  style={{ padding: '0.5rem 1rem', background: '#3b82f6', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600', marginLeft: 'auto', opacity: (!playerMarker || !isCalibrated || isProcessing) ? 0.5 : 1 }}
                 >
-                  {isProcessing ? `Processing... ${processingProgress}%` : '🚀 Analyze Video'}
+                  {isProcessing ? `Processing... ${processingProgress}%` : '🚀 Analyze Movement'}
                 </button>
               </div>
 
               {isProcessing && (
                 <div style={{ marginTop: '0.75rem' }}>
-                  <div style={{ height: '6px', background: '#374151', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ height: '8px', background: '#374151', borderRadius: '4px', overflow: 'hidden' }}>
                     <div style={{ height: '100%', width: `${processingProgress}%`, background: '#3b82f6', transition: 'width 0.1s' }} />
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem', textAlign: 'center' }}>
@@ -1110,7 +1518,6 @@ function VideoAnalysis() {
                 {/* Summary Tab */}
                 {activeResultTab === 'summary' && (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-                    {/* Max Speed */}
                     <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
                       <div style={{ fontSize: '0.8rem', color: '#3b82f6', marginBottom: '0.25rem' }}>Max Speed</div>
                       <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
@@ -1119,7 +1526,6 @@ function VideoAnalysis() {
                       <div style={{ fontSize: '0.75rem', color: '#64748b' }}>MPH</div>
                     </div>
 
-                    {/* Max Acceleration */}
                     <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
                       <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginBottom: '0.25rem' }}>Max Acceleration</div>
                       <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
@@ -1128,7 +1534,6 @@ function VideoAnalysis() {
                       <div style={{ fontSize: '0.75rem', color: '#64748b' }}>g-force</div>
                     </div>
 
-                    {/* Max Power */}
                     <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
                       <div style={{ fontSize: '0.8rem', color: '#ef4444', marginBottom: '0.25rem' }}>Max Power</div>
                       <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
@@ -1137,7 +1542,6 @@ function VideoAnalysis() {
                       <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Watts</div>
                     </div>
 
-                    {/* Splits */}
                     <div style={{ gridColumn: 'span 3', background: '#0f172a', padding: '1rem', borderRadius: '0.5rem' }}>
                       <div style={{ fontSize: '0.8rem', color: '#22c55e', marginBottom: '0.5rem' }}>Split Times</div>
                       <div style={{ display: 'flex', justifyContent: 'space-around' }}>
@@ -1154,21 +1558,18 @@ function VideoAnalysis() {
                   </div>
                 )}
 
-                {/* Speed Chart */}
                 {activeResultTab === 'speed' && (
                   <div style={{ height: '300px' }}>
                     <canvas ref={speedChartRef} />
                   </div>
                 )}
 
-                {/* Acceleration Chart */}
                 {activeResultTab === 'acceleration' && (
                   <div style={{ height: '300px' }}>
                     <canvas ref={accelChartRef} />
                   </div>
                 )}
 
-                {/* Power Chart */}
                 {activeResultTab === 'power' && (
                   <div style={{ height: '300px' }}>
                     {getEffectiveWeight() ? (
@@ -1181,7 +1582,6 @@ function VideoAnalysis() {
                   </div>
                 )}
 
-                {/* Data Table */}
                 {activeResultTab === 'data' && (
                   <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
@@ -1222,12 +1622,12 @@ function VideoAnalysis() {
         )}
 
         {/* Empty State */}
-        {!videoSource && (
+        {!videoSource && !isRecordingMode && !recordedVideoUrl && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', color: '#64748b' }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📹</div>
             <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>No Video Loaded</div>
             <div style={{ fontSize: '0.9rem', textAlign: 'center', maxWidth: '400px' }}>
-              Upload a video file or paste a URL to begin analyzing athlete performance with AI-powered motion tracking.
+              Record a video, upload a file, or paste a URL to begin analyzing athlete performance with AI-powered motion tracking.
             </div>
           </div>
         )}
