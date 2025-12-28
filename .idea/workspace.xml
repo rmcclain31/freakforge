@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="Charts tab radar improvements (Dashboard.js):&#10;&#10;Removed dark pane around AthleteLegend - now has transparent background&#10;Removed UnitsLegend component entirely&#10;Added units to axis labels for all radar charts in both Stack and Iso modes:&#10;&#10;Standard: &quot;40-Yard Dash (sec)&quot;, &quot;Vertical Jump (in)&quot;, etc.&#10;Attribute: &quot;Height (in)&quot;, &quot;Weight (lbs)&quot;&#10;Forged: Dynamic units like &quot;(sec/lbs)&quot;, &quot;(in/sec)&quot;, etc.&#10;&#10;&#10;Forged radar font size now matches other radars (size 12 instead of 9)&#10;&#10;2. Metric selection persistence (FreakFinder.js):&#10;&#10;Added useEffect to sync selectedMetrics from forgedAxes when component mounts&#10;Changed all isSelected checks to use forgedAxes (shared AppContext state) instead of local selectedMetrics state&#10;Updated toggleMetricSelection to check forgedAxes for existing selections&#10;Updated the &quot;Selected: X/8&quot; display to use forgedAxes.length&#10;Updated drawBellCurve useEffect dependency to use forgedAxes&#10;&#10;Now when you select metrics in Metric Explorer and navigate to Charts tab (and back), your forged metric selections will persist.">
-      <change afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/poseDetection.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/trackingProfiles.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/videoPhysics.js" afterDir="false" />
+    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="Key features implemented:&#10;&#10;✅ MoveNet 11-keypoint tracking (ears, shoulders, elbows, hips, knees, ankles)&#10;✅ Auto-track mode with progress bar + cancel&#10;✅ Manual keyframe adjustment (click keypoint → click new position)&#10;✅ Biomechanics toggle (spine angle, shin angle, foot angle)&#10;✅ Time override panel with rescaled physics&#10;✅ Skeleton overlay with confidence visualization&#10;✅ Enhanced results with biomechanics graphs">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/components/VideoAnalysis/VideoAnalysis.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/VideoAnalysis/VideoAnalysis.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/utils/poseDetection.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/poseDetection.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/utils/trackingProfiles.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/utils/trackingProfiles.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -80,7 +79,7 @@
       <option name="presentableId" value="Default" />
       <updated>1766616229934</updated>
       <workItem from="1766616230976" duration="8783000" />
-      <workItem from="1766723605532" duration="29141000" />
+      <workItem from="1766723605532" duration="30949000" />
     </task>
     <task id="LOCAL-00001" summary="First Comit">
       <option name="closed" value="true" />
@@ -162,7 +161,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766941246794</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="Key features implemented:&#10;&#10;✅ MoveNet 11-keypoint tracking (ears, shoulders, elbows, hips, knees, ankles)&#10;✅ Auto-track mode with progress bar + cancel&#10;✅ Manual keyframe adjustment (click keypoint → click new position)&#10;✅ Biomechanics toggle (spine angle, shin angle, foot angle)&#10;✅ Time override panel with rescaled physics&#10;✅ Skeleton overlay with confidence visualization&#10;✅ Enhanced results with biomechanics graphs">
+      <option name="closed" value="true" />
+      <created>1766944323617</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1766944323617</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -178,7 +185,8 @@
     <MESSAGE value="Updated video changes and UTF-8 mis-rendering fix." />
     <MESSAGE value="Each stacked radar pane now has a Units legend on the right&#10;Shows metric name and unit in parentheses (e.g. &quot;40-Yard Dash (sec)&quot;)&#10;Forged ratios show compound units (e.g. &quot;in/lbs&quot;)&#10;Matches the visual style of the Athlete legend" />
     <MESSAGE value="Charts tab radar improvements (Dashboard.js):&#10;&#10;Removed dark pane around AthleteLegend - now has transparent background&#10;Removed UnitsLegend component entirely&#10;Added units to axis labels for all radar charts in both Stack and Iso modes:&#10;&#10;Standard: &quot;40-Yard Dash (sec)&quot;, &quot;Vertical Jump (in)&quot;, etc.&#10;Attribute: &quot;Height (in)&quot;, &quot;Weight (lbs)&quot;&#10;Forged: Dynamic units like &quot;(sec/lbs)&quot;, &quot;(in/sec)&quot;, etc.&#10;&#10;&#10;Forged radar font size now matches other radars (size 12 instead of 9)&#10;&#10;2. Metric selection persistence (FreakFinder.js):&#10;&#10;Added useEffect to sync selectedMetrics from forgedAxes when component mounts&#10;Changed all isSelected checks to use forgedAxes (shared AppContext state) instead of local selectedMetrics state&#10;Updated toggleMetricSelection to check forgedAxes for existing selections&#10;Updated the &quot;Selected: X/8&quot; display to use forgedAxes.length&#10;Updated drawBellCurve useEffect dependency to use forgedAxes&#10;&#10;Now when you select metrics in Metric Explorer and navigate to Charts tab (and back), your forged metric selections will persist." />
-    <option name="LAST_COMMIT_MESSAGE" value="Charts tab radar improvements (Dashboard.js):&#10;&#10;Removed dark pane around AthleteLegend - now has transparent background&#10;Removed UnitsLegend component entirely&#10;Added units to axis labels for all radar charts in both Stack and Iso modes:&#10;&#10;Standard: &quot;40-Yard Dash (sec)&quot;, &quot;Vertical Jump (in)&quot;, etc.&#10;Attribute: &quot;Height (in)&quot;, &quot;Weight (lbs)&quot;&#10;Forged: Dynamic units like &quot;(sec/lbs)&quot;, &quot;(in/sec)&quot;, etc.&#10;&#10;&#10;Forged radar font size now matches other radars (size 12 instead of 9)&#10;&#10;2. Metric selection persistence (FreakFinder.js):&#10;&#10;Added useEffect to sync selectedMetrics from forgedAxes when component mounts&#10;Changed all isSelected checks to use forgedAxes (shared AppContext state) instead of local selectedMetrics state&#10;Updated toggleMetricSelection to check forgedAxes for existing selections&#10;Updated the &quot;Selected: X/8&quot; display to use forgedAxes.length&#10;Updated drawBellCurve useEffect dependency to use forgedAxes&#10;&#10;Now when you select metrics in Metric Explorer and navigate to Charts tab (and back), your forged metric selections will persist." />
+    <MESSAGE value="Key features implemented:&#10;&#10;✅ MoveNet 11-keypoint tracking (ears, shoulders, elbows, hips, knees, ankles)&#10;✅ Auto-track mode with progress bar + cancel&#10;✅ Manual keyframe adjustment (click keypoint → click new position)&#10;✅ Biomechanics toggle (spine angle, shin angle, foot angle)&#10;✅ Time override panel with rescaled physics&#10;✅ Skeleton overlay with confidence visualization&#10;✅ Enhanced results with biomechanics graphs" />
+    <option name="LAST_COMMIT_MESSAGE" value="Key features implemented:&#10;&#10;✅ MoveNet 11-keypoint tracking (ears, shoulders, elbows, hips, knees, ankles)&#10;✅ Auto-track mode with progress bar + cancel&#10;✅ Manual keyframe adjustment (click keypoint → click new position)&#10;✅ Biomechanics toggle (spine angle, shin angle, foot angle)&#10;✅ Time override panel with rescaled physics&#10;✅ Skeleton overlay with confidence visualization&#10;✅ Enhanced results with biomechanics graphs" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/athletic_app$main.coverage" NAME="main Coverage Results" MODIFIED="1766715571495" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/athletic-metrics-analyzer/backend" />

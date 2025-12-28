@@ -139,7 +139,9 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
     enableBiomechanics = false,
     movementDirection = 'right',
     startTime = 0,
-    endTime = null
+    endTime = null,
+    confidenceThreshold = 0.3,
+    athleteRegion = null
   } = options;
 
   const profile = TRACKING_PROFILES[profileId];
@@ -182,23 +184,53 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
     if (poseResult) {
       const { keypoints, score } = poseResult;
 
-      // Filter to profile keypoints only
+      // If athlete region is specified, filter keypoints outside it
+      let filteredByRegion = keypoints;
+      if (athleteRegion) {
+        const { x, y, width, height } = athleteRegion;
+        const regionLeft = x - width / 2;
+        const regionRight = x + width / 2;
+        const regionTop = y - height / 2;
+        const regionBottom = y + height / 2;
+
+        // Check if majority of keypoints are in region
+        const inRegion = Object.values(keypoints).filter(kp =>
+          kp && kp.x >= regionLeft && kp.x <= regionRight &&
+          kp.y >= regionTop && kp.y <= regionBottom
+        ).length;
+
+        // If less than half of keypoints in region, this might be wrong person
+        if (inRegion < Object.keys(keypoints).length / 2) {
+          // Mark as low confidence
+          filteredByRegion = Object.fromEntries(
+            Object.entries(keypoints).map(([k, v]) => [k, { ...v, score: v.score * 0.5 }])
+          );
+        }
+      }
+
+      // Filter to profile keypoints only, applying confidence threshold
       const filteredKeypoints = {};
       profile.keypoints.forEach(idx => {
-        if (keypoints[idx]) {
-          filteredKeypoints[idx] = keypoints[idx];
+        if (filteredByRegion[idx] && filteredByRegion[idx].score >= confidenceThreshold) {
+          filteredKeypoints[idx] = filteredByRegion[idx];
         }
       });
 
       // Calculate derived positions
-      const centerOfMass = calculateCenterOfMass(keypoints);
-      const headPosition = calculateHeadPosition(keypoints);
+      const centerOfMass = calculateCenterOfMass(filteredByRegion);
+      const headPosition = calculateHeadPosition(filteredByRegion);
 
       // Calculate biomechanics if enabled
       let biomechanics = null;
       if (enableBiomechanics) {
-        biomechanics = calculateBiomechanics(keypoints, movementDirection, prevKeypoints);
+        biomechanics = calculateBiomechanics(filteredByRegion, movementDirection, prevKeypoints);
       }
+
+      // Calculate overall frame confidence
+      const keypointScores = Object.values(filteredKeypoints).map(kp => kp.score);
+      const frameConfidence = keypointScores.length > 0
+        ? keypointScores.reduce((a, b) => a + b, 0) / keypointScores.length
+        : 0;
 
       frameData.push({
         frame: i,
@@ -207,11 +239,11 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
         centerOfMass,
         headPosition,
         biomechanics,
-        confidence: score,
+        confidence: frameConfidence,
         isManuallyAdjusted: false
       });
 
-      prevKeypoints = keypoints;
+      prevKeypoints = filteredByRegion;
     } else {
       // No pose detected - interpolate or mark as missing
       frameData.push({

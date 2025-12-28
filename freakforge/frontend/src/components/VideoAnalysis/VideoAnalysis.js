@@ -201,6 +201,12 @@ function VideoAnalysis() {
   const [recordingPreviewHeight, setRecordingPreviewHeight] = useState(240);
   const [isResizingPreview, setIsResizingPreview] = useState(false);
 
+  // Video panel resize
+  const [videoContainerHeight, setVideoContainerHeight] = useState(300); // Default height in pixels
+  const [isResizingVideo, setIsResizingVideo] = useState(false);
+  const videoResizeStartY = useRef(0);
+  const videoResizeStartHeight = useRef(0);
+
   // Calibration state
   const [selectedDrill, setSelectedDrill] = useState('custom');
   const [calibrationMode, setCalibrationMode] = useState('line');
@@ -233,6 +239,22 @@ function VideoAnalysis() {
 
   // Biomechanics toggle
   const [enableBiomechanics, setEnableBiomechanics] = useState(false);
+
+  // Tracking quality state
+  const [trackingQuality, setTrackingQuality] = useState(null);
+  const [frameConfidences, setFrameConfidences] = useState([]);
+  const [showQualityWarning, setShowQualityWarning] = useState(false);
+
+  // Athlete selection mode (for crowded scenes)
+  const [athleteSelectionMode, setAthleteSelectionMode] = useState(false);
+  const [selectedAthleteBox, setSelectedAthleteBox] = useState(null);
+
+  // Manual tracking fallback mode
+  const [manualTrackingMode, setManualTrackingMode] = useState(false);
+  const [manualCOMPoints, setManualCOMPoints] = useState([]);
+
+  // Confidence threshold setting
+  const [confidenceThreshold, setConfidenceThreshold] = useState(0.3);
 
   // Time override state
   const [timeOverrides, setTimeOverrides] = useState({
@@ -524,6 +546,16 @@ function VideoAnalysis() {
       endTime: null,
       splits: { 10: null, 20: null, 30: null, 40: null }
     });
+    // Reset quality tracking
+    setTrackingQuality(null);
+    setFrameConfidences([]);
+    setShowQualityWarning(false);
+    // Reset athlete selection
+    setAthleteSelectionMode(false);
+    setSelectedAthleteBox(null);
+    // Reset manual tracking
+    setManualTrackingMode(false);
+    setManualCOMPoints([]);
   };
 
   // ============ VIDEO PLAYBACK ============
@@ -532,6 +564,12 @@ function VideoAnalysis() {
     if (videoRef.current) {
       setDuration(videoRef.current.duration);
       setTotalFrames(Math.floor(videoRef.current.duration * fps));
+
+      // Initialize canvas dimensions
+      if (canvasRef.current) {
+        canvasRef.current.width = videoRef.current.videoWidth || 640;
+        canvasRef.current.height = videoRef.current.videoHeight || 360;
+      }
     }
   };
 
@@ -551,8 +589,13 @@ function VideoAnalysis() {
   };
 
   const stepFrame = (delta) => {
-    const newFrame = Math.max(0, Math.min(totalFrames - 1, currentFrame + delta));
-    seekToFrame(newFrame);
+    setCurrentFrame(prevFrame => {
+      const newFrame = Math.max(0, Math.min(totalFrames - 1, prevFrame + delta));
+      if (videoRef.current) {
+        videoRef.current.currentTime = newFrame / fps;
+      }
+      return newFrame;
+    });
   };
 
   const togglePlay = () => {
@@ -564,6 +607,46 @@ function VideoAnalysis() {
       }
       setIsPlaying(!isPlaying);
     }
+  };
+
+  // Video container resize handlers
+  const handleVideoResizeStart = (e) => {
+    e.preventDefault();
+    setIsResizingVideo(true);
+    videoResizeStartY.current = e.clientY;
+    videoResizeStartHeight.current = videoContainerHeight;
+  };
+
+  const handleVideoResizeMove = useCallback((e) => {
+    if (!isResizingVideo) return;
+    const deltaY = e.clientY - videoResizeStartY.current;
+    const newHeight = Math.max(150, Math.min(window.innerHeight * 0.7, videoResizeStartHeight.current + deltaY));
+    setVideoContainerHeight(newHeight);
+  }, [isResizingVideo]);
+
+  const handleVideoResizeEnd = useCallback(() => {
+    setIsResizingVideo(false);
+  }, []);
+
+  // Global mouse handlers for video resize
+  useEffect(() => {
+    if (isResizingVideo) {
+      window.addEventListener('mousemove', handleVideoResizeMove);
+      window.addEventListener('mouseup', handleVideoResizeEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleVideoResizeMove);
+        window.removeEventListener('mouseup', handleVideoResizeEnd);
+      };
+    }
+  }, [isResizingVideo, handleVideoResizeMove, handleVideoResizeEnd]);
+
+  // Determine cursor style based on mode
+  const getCanvasCursor = () => {
+    if (athleteSelectionMode) return 'crosshair';
+    if (manualTrackingMode) return 'crosshair';
+    if (selectedKeypoint !== null) return 'crosshair';
+    if (!isCalibrated && calibrationMarkers.length < 2) return 'crosshair';
+    return 'default';
   };
 
   // ============ CALIBRATION ============
@@ -583,13 +666,77 @@ function VideoAnalysis() {
   };
 
   const handleCanvasClick = (e) => {
-    if (!canvasRef.current) return;
+    if (!containerRef.current || !videoRef.current) return;
 
-    const rect = canvasRef.current.getBoundingClientRect();
-    const scaleX = canvasRef.current.width / rect.width;
-    const scaleY = canvasRef.current.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    const rect = containerRef.current.getBoundingClientRect();
+    const video = videoRef.current;
+
+    // Get actual video dimensions
+    const videoWidth = video.videoWidth || 640;
+    const videoHeight = video.videoHeight || 360;
+
+    // Calculate where the video is rendered within the container (accounting for object-fit: contain)
+    const containerAspect = rect.width / rect.height;
+    const videoAspect = videoWidth / videoHeight;
+
+    let renderWidth, renderHeight, offsetX, offsetY;
+
+    if (containerAspect > videoAspect) {
+      // Container is wider - video will have horizontal letterboxing
+      renderHeight = rect.height;
+      renderWidth = rect.height * videoAspect;
+      offsetX = (rect.width - renderWidth) / 2;
+      offsetY = 0;
+    } else {
+      // Container is taller - video will have vertical letterboxing
+      renderWidth = rect.width;
+      renderHeight = rect.width / videoAspect;
+      offsetX = 0;
+      offsetY = (rect.height - renderHeight) / 2;
+    }
+
+    // Calculate click position relative to the actual video render area
+    const clickX = e.clientX - rect.left - offsetX;
+    const clickY = e.clientY - rect.top - offsetY;
+
+    // Check if click is within the video area
+    if (clickX < 0 || clickX > renderWidth || clickY < 0 || clickY > renderHeight) {
+      return; // Click was in letterbox area
+    }
+
+    // Scale to video pixel coordinates
+    const x = (clickX / renderWidth) * videoWidth;
+    const y = (clickY / renderHeight) * videoHeight;
+
+    // Handle athlete selection mode (for crowded scenes)
+    if (athleteSelectionMode) {
+      setSelectedAthleteBox({ x, y, width: 100, height: 200 }); // Default box size
+      setAthleteSelectionMode(false);
+      return;
+    }
+
+    // Handle manual COM tracking mode
+    if (manualTrackingMode) {
+      const newPoint = {
+        frame: currentFrame,
+        time: currentFrame / fps,
+        x,
+        y,
+        isManual: true
+      };
+
+      // Update or add point for current frame
+      setManualCOMPoints(prev => {
+        const existing = prev.findIndex(p => p.frame === currentFrame);
+        if (existing >= 0) {
+          const updated = [...prev];
+          updated[existing] = newPoint;
+          return updated;
+        }
+        return [...prev, newPoint].sort((a, b) => a.frame - b.frame);
+      });
+      return;
+    }
 
     // Handle keypoint dragging
     if (selectedKeypoint !== null && trackingData.length > 0) {
@@ -629,13 +776,38 @@ function VideoAnalysis() {
   };
 
   const handleCanvasMouseMove = (e) => {
-    if (!isDragging || activeMarkerIndex === null || !canvasRef.current) return;
+    if (!isDragging || activeMarkerIndex === null || !containerRef.current || !videoRef.current) return;
 
-    const rect = canvasRef.current.getBoundingClientRect();
-    const scaleX = canvasRef.current.width / rect.width;
-    const scaleY = canvasRef.current.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    const rect = containerRef.current.getBoundingClientRect();
+    const video = videoRef.current;
+
+    // Get actual video dimensions
+    const videoWidth = video.videoWidth || 640;
+    const videoHeight = video.videoHeight || 360;
+
+    // Calculate where the video is rendered within the container
+    const containerAspect = rect.width / rect.height;
+    const videoAspect = videoWidth / videoHeight;
+
+    let renderWidth, renderHeight, offsetX, offsetY;
+
+    if (containerAspect > videoAspect) {
+      renderHeight = rect.height;
+      renderWidth = rect.height * videoAspect;
+      offsetX = (rect.width - renderWidth) / 2;
+      offsetY = 0;
+    } else {
+      renderWidth = rect.width;
+      renderHeight = rect.width / videoAspect;
+      offsetX = 0;
+      offsetY = (rect.height - renderHeight) / 2;
+    }
+
+    const clickX = e.clientX - rect.left - offsetX;
+    const clickY = e.clientY - rect.top - offsetY;
+
+    const x = (clickX / renderWidth) * videoWidth;
+    const y = (clickY / renderHeight) * videoHeight;
 
     setCalibrationMarkers(prev => {
       const updated = [...prev];
@@ -677,6 +849,9 @@ function VideoAnalysis() {
     setProcessingProgress(0);
     cancelProcessingRef.current = false;
     setProcessingCancelled(false);
+    setTrackingQuality(null);
+    setFrameConfidences([]);
+    setShowQualityWarning(false);
 
     try {
       // Process video with AI pose detection
@@ -686,7 +861,9 @@ function VideoAnalysis() {
           fps,
           profileId: activeProfile,
           enableBiomechanics,
-          movementDirection
+          movementDirection,
+          confidenceThreshold,
+          athleteRegion: selectedAthleteBox // Pass athlete selection if set
         },
         (progress) => setProcessingProgress(progress),
         () => cancelProcessingRef.current
@@ -696,6 +873,29 @@ function VideoAnalysis() {
         setProcessingCancelled(true);
         setIsProcessing(false);
         return;
+      }
+
+      // Calculate tracking quality metrics
+      const confidences = frameData.map(f => f.confidence || 0);
+      setFrameConfidences(confidences);
+
+      const avgConfidence = confidences.reduce((a, b) => a + b, 0) / confidences.length;
+      const goodFrames = confidences.filter(c => c >= confidenceThreshold).length;
+      const goodFramePercent = (goodFrames / confidences.length) * 100;
+      const missingFrames = frameData.filter(f => f.isMissing).length;
+
+      const quality = {
+        avgConfidence: avgConfidence * 100,
+        goodFramePercent,
+        missingFrames,
+        totalFrames: frameData.length,
+        rating: avgConfidence >= 0.7 ? 'excellent' : avgConfidence >= 0.5 ? 'good' : avgConfidence >= 0.3 ? 'fair' : 'poor'
+      };
+      setTrackingQuality(quality);
+
+      // Show warning if quality is poor
+      if (quality.rating === 'poor' || quality.rating === 'fair') {
+        setShowQualityWarning(true);
       }
 
       // Detect movement direction from tracking data
@@ -733,6 +933,64 @@ function VideoAnalysis() {
 
   const cancelProcessing = () => {
     cancelProcessingRef.current = true;
+  };
+
+  // Process manual COM tracking data
+  const processManualTracking = () => {
+    if (manualCOMPoints.length < 2 || !pixelsPerYard) {
+      setVideoError('Need at least 2 manual points and calibration to analyze');
+      return;
+    }
+
+    // Sort points by frame
+    const sortedPoints = [...manualCOMPoints].sort((a, b) => a.frame - b.frame);
+
+    // Interpolate between manual keyframes
+    const interpolatedData = [];
+    for (let i = 0; i < sortedPoints.length - 1; i++) {
+      const start = sortedPoints[i];
+      const end = sortedPoints[i + 1];
+
+      for (let frame = start.frame; frame <= end.frame; frame++) {
+        const t = (frame - start.frame) / (end.frame - start.frame);
+        interpolatedData.push({
+          frame,
+          time: frame / fps,
+          centerOfMass: {
+            x: start.x + t * (end.x - start.x),
+            y: start.y + t * (end.y - start.y),
+            score: 1.0
+          },
+          keypoints: null,
+          headPosition: null,
+          biomechanics: null,
+          confidence: 1.0,
+          isManuallyAdjusted: sortedPoints.some(p => p.frame === frame)
+        });
+      }
+    }
+
+    setTrackingData(interpolatedData);
+    setTrackingQuality({
+      avgConfidence: 100,
+      goodFramePercent: 100,
+      missingFrames: 0,
+      totalFrames: interpolatedData.length,
+      rating: 'manual'
+    });
+
+    // Calculate physics
+    const weight = getEffectiveWeight();
+    const physics = calculatePhysics(
+      interpolatedData,
+      pixelsPerYard,
+      fps,
+      timeOverrides,
+      weight
+    );
+
+    setAnalysisResults(physics);
+    setActiveResultTab('summary');
   };
 
   // Recalculate physics when time overrides change
@@ -786,6 +1044,90 @@ function VideoAnalysis() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Draw mode indicator
+    if (athleteSelectionMode) {
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.2)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillStyle = '#fbbf24';
+      ctx.textAlign = 'center';
+      ctx.fillText('Click on the athlete to track', canvas.width / 2, 30);
+      ctx.textAlign = 'left';
+    }
+
+    if (manualTrackingMode) {
+      ctx.fillStyle = 'rgba(139, 92, 246, 0.1)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillStyle = '#a78bfa';
+      ctx.fillText('Manual Mode: Click to place center-of-mass', 10, 25);
+    }
+
+    // Draw athlete selection box
+    if (selectedAthleteBox) {
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([8, 4]);
+      ctx.strokeRect(
+        selectedAthleteBox.x - selectedAthleteBox.width / 2,
+        selectedAthleteBox.y - selectedAthleteBox.height / 2,
+        selectedAthleteBox.width,
+        selectedAthleteBox.height
+      );
+      ctx.setLineDash([]);
+
+      // Center crosshair
+      ctx.beginPath();
+      ctx.moveTo(selectedAthleteBox.x - 10, selectedAthleteBox.y);
+      ctx.lineTo(selectedAthleteBox.x + 10, selectedAthleteBox.y);
+      ctx.moveTo(selectedAthleteBox.x, selectedAthleteBox.y - 10);
+      ctx.lineTo(selectedAthleteBox.x, selectedAthleteBox.y + 10);
+      ctx.stroke();
+    }
+
+    // Draw manual COM points
+    if (manualCOMPoints.length > 0) {
+      // Draw path between points
+      ctx.strokeStyle = '#a78bfa';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      manualCOMPoints.forEach((point, i) => {
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw points
+      manualCOMPoints.forEach((point, i) => {
+        const isCurrentFrame = point.frame === currentFrame;
+
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, isCurrentFrame ? 10 : 6, 0, Math.PI * 2);
+        ctx.fillStyle = isCurrentFrame ? '#fbbf24' : '#a78bfa';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Frame number label
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(`F${point.frame}`, point.x + 12, point.y - 8);
+      });
+
+      // Highlight current frame point if exists
+      const currentPoint = manualCOMPoints.find(p => p.frame === currentFrame);
+      if (currentPoint) {
+        ctx.beginPath();
+        ctx.arc(currentPoint.x, currentPoint.y, 14, 0, Math.PI * 2);
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+    }
+
     // Draw calibration markers
     if (calibrationMarkers.length > 0) {
       ctx.strokeStyle = '#22c55e';
@@ -835,7 +1177,7 @@ function VideoAnalysis() {
         const start = frameData.keypoints[startIdx];
         const end = frameData.keypoints[endIdx];
 
-        if (start && end && start.score > 0.3 && end.score > 0.3) {
+        if (start && end && start.score > confidenceThreshold && end.score > confidenceThreshold) {
           ctx.strokeStyle = `rgba(59, 130, 246, ${Math.min(start.score, end.score)})`;
           ctx.beginPath();
           ctx.moveTo(start.x, start.y);
@@ -846,7 +1188,7 @@ function VideoAnalysis() {
 
       // Draw keypoints
       Object.entries(frameData.keypoints).forEach(([idx, kp]) => {
-        if (!kp || kp.score < 0.3) return;
+        if (!kp || kp.score < confidenceThreshold) return;
 
         const keypointIdx = parseInt(idx);
         let color = '#3b82f6';
@@ -943,12 +1285,17 @@ function VideoAnalysis() {
         }
       }
     }
-  }, [calibrationMarkers, calibrationMode, currentFrame, trackingData, selectedKeypoint, manualKeyframes, enableBiomechanics, activeProfile]);
+  }, [calibrationMarkers, calibrationMode, currentFrame, trackingData, selectedKeypoint, manualKeyframes, enableBiomechanics, activeProfile, athleteSelectionMode, selectedAthleteBox, manualTrackingMode, manualCOMPoints, confidenceThreshold]);
 
   // Update overlay when frame changes
   useEffect(() => {
     drawOverlay();
   }, [drawOverlay, currentFrame]);
+
+  // Also redraw when calibration markers change
+  useEffect(() => {
+    drawOverlay();
+  }, [calibrationMarkers]);
 
   // ============ CHARTS ============
 
@@ -1216,7 +1563,7 @@ function VideoAnalysis() {
   // ============ RENDER ============
 
   return (
-    <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
+    <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto', maxHeight: '100vh', overflowY: 'auto' }}>
       {/* Header */}
       <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#fbbf24', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1300,10 +1647,16 @@ function VideoAnalysis() {
         {/* Video Panel */}
         {videoSource && (
           <div style={{ background: '#1e293b', borderRadius: '0.5rem', overflow: 'hidden' }}>
-            {/* Video Container */}
+            {/* Video Container - resizable */}
             <div
               ref={containerRef}
-              style={{ position: 'relative', background: '#000000' }}
+              style={{
+                position: 'relative',
+                background: '#000000',
+                height: `${videoContainerHeight}px`,
+                overflow: 'hidden',
+                cursor: getCanvasCursor()
+              }}
               onClick={handleCanvasClick}
               onMouseMove={handleCanvasMouseMove}
               onMouseUp={handleCanvasMouseUp}
@@ -1316,7 +1669,13 @@ function VideoAnalysis() {
                 onTimeUpdate={handleTimeUpdate}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
-                style={{ width: '100%', display: 'block' }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  display: 'block',
+                  pointerEvents: 'none'
+                }}
               />
               <canvas
                 ref={canvasRef}
@@ -1326,9 +1685,28 @@ function VideoAnalysis() {
                   left: 0,
                   width: '100%',
                   height: '100%',
-                  pointerEvents: isDragging ? 'auto' : 'none'
+                  pointerEvents: 'none',
+                  cursor: getCanvasCursor()
                 }}
               />
+            </div>
+
+            {/* Resize Handle */}
+            <div
+              onMouseDown={handleVideoResizeStart}
+              style={{
+                height: '8px',
+                background: isResizingVideo ? '#3b82f6' : '#374151',
+                cursor: 'ns-resize',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#3b82f6'}
+              onMouseLeave={(e) => !isResizingVideo && (e.currentTarget.style.background = '#374151')}
+            >
+              <div style={{ width: '40px', height: '3px', background: '#9ca3af', borderRadius: '2px' }} />
             </div>
 
             {/* Video Controls */}
@@ -1374,13 +1752,60 @@ function VideoAnalysis() {
                 <span>Duration: {duration.toFixed(2)}s</span>
                 <span>FPS: {fps}</span>
               </div>
+
+              {/* Confidence Heatmap Timeline */}
+              {frameConfidences.length > 0 && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>
+                    Tracking Confidence by Frame
+                  </div>
+                  <div style={{
+                    display: 'flex',
+                    height: '20px',
+                    borderRadius: '4px',
+                    overflow: 'hidden',
+                    background: '#0f172a'
+                  }}>
+                    {frameConfidences.map((conf, i) => {
+                      // Sample every Nth frame to keep it reasonable
+                      const sampleRate = Math.max(1, Math.floor(frameConfidences.length / 200));
+                      if (i % sampleRate !== 0) return null;
+
+                      const color = conf >= 0.7 ? '#22c55e' : conf >= 0.5 ? '#fbbf24' : conf >= 0.3 ? '#f97316' : '#ef4444';
+                      const isCurrentFrame = Math.abs(i - currentFrame) < sampleRate;
+
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => seekToFrame(i)}
+                          style={{
+                            flex: 1,
+                            background: color,
+                            opacity: conf,
+                            cursor: 'pointer',
+                            borderLeft: isCurrentFrame ? '2px solid #ffffff' : 'none',
+                            borderRight: isCurrentFrame ? '2px solid #ffffff' : 'none'
+                          }}
+                          title={`Frame ${i}: ${(conf * 100).toFixed(0)}% confidence`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#64748b', marginTop: '0.25rem' }}>
+                    <span>🟢 High</span>
+                    <span>🟡 Medium</span>
+                    <span>🟠 Low</span>
+                    <span>🔴 Poor</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
         {/* Control Panel */}
         {videoSource && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }}>
             {/* Tracking Profile */}
             <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
               <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>📊 Tracking Profile</h3>
@@ -1479,23 +1904,226 @@ function VideoAnalysis() {
               </p>
             </div>
 
+            {/* Athlete Selection Mode (for crowded scenes) */}
+            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: selectedAthleteBox ? '4px solid #fbbf24' : '4px solid #374151' }}>
+              <h3 style={{ fontSize: '0.9rem', color: '#fbbf24', marginBottom: '0.5rem' }}>👤 Athlete Selection</h3>
+              <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.5rem' }}>
+                For crowded scenes (game footage), select the athlete to track
+              </p>
+              <button
+                onClick={() => {
+                  setAthleteSelectionMode(true);
+                  setSelectedAthleteBox(null);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  background: athleteSelectionMode ? '#fbbf24' : '#374151',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  color: athleteSelectionMode ? '#000000' : '#ffffff',
+                  cursor: 'pointer',
+                  fontWeight: '500'
+                }}
+              >
+                {athleteSelectionMode ? '⏳ Click on athlete...' : selectedAthleteBox ? '✓ Athlete Selected' : '🎯 Select Athlete'}
+              </button>
+              {selectedAthleteBox && (
+                <button
+                  onClick={() => setSelectedAthleteBox(null)}
+                  style={{ marginTop: '0.5rem', width: '100%', padding: '0.4rem', background: 'transparent', border: '1px solid #374151', borderRadius: '0.375rem', color: '#9ca3af', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  Clear Selection
+                </button>
+              )}
+            </div>
+
+            {/* Confidence Threshold */}
+            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
+              <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>🎚️ Confidence Threshold</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.7"
+                  step="0.05"
+                  value={confidenceThreshold}
+                  onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontSize: '0.85rem', color: '#fbbf24', minWidth: '40px' }}>
+                  {(confidenceThreshold * 100).toFixed(0)}%
+                </span>
+              </div>
+              <p style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.25rem' }}>
+                Lower = more data but noisier. Higher = cleaner but may miss frames.
+              </p>
+            </div>
+
+            {/* Manual Tracking Fallback */}
+            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: manualTrackingMode ? '4px solid #a78bfa' : '4px solid #374151' }}>
+              <h3 style={{ fontSize: '0.9rem', color: '#a78bfa', marginBottom: '0.5rem' }}>✏️ Manual Tracking</h3>
+              <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.5rem' }}>
+                If AI tracking fails, manually place center-of-mass points
+              </p>
+              <button
+                onClick={() => setManualTrackingMode(!manualTrackingMode)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  background: manualTrackingMode ? '#a78bfa' : '#374151',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  fontWeight: '500'
+                }}
+              >
+                {manualTrackingMode ? '✓ Manual Mode Active' : 'Enable Manual Mode'}
+              </button>
+
+              {manualTrackingMode && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.5rem' }}>
+                    {manualCOMPoints.length} point(s) placed
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={processManualTracking}
+                      disabled={manualCOMPoints.length < 2}
+                      style={{
+                        flex: 1,
+                        padding: '0.4rem',
+                        background: manualCOMPoints.length >= 2 ? '#22c55e' : '#374151',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        color: '#ffffff',
+                        cursor: manualCOMPoints.length >= 2 ? 'pointer' : 'not-allowed',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      Calculate
+                    </button>
+                    <button
+                      onClick={() => setManualCOMPoints([])}
+                      style={{
+                        padding: '0.4rem 0.75rem',
+                        background: '#374151',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        color: '#ffffff',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <p style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '0.5rem' }}>
+                    Tip: Step through frames, click to place points at start, key frames, and end
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Process Button */}
             <button
               onClick={isProcessing ? cancelProcessing : processVideo}
-              disabled={!isCalibrated || !poseDetectorReady}
+              disabled={!isCalibrated || !poseDetectorReady || manualTrackingMode}
               style={{
                 padding: '1rem',
-                background: isProcessing ? '#ef4444' : (isCalibrated && poseDetectorReady ? '#8b5cf6' : '#374151'),
+                background: isProcessing ? '#ef4444' : (isCalibrated && poseDetectorReady && !manualTrackingMode ? '#8b5cf6' : '#374151'),
                 border: 'none',
                 borderRadius: '0.5rem',
                 color: '#ffffff',
-                cursor: isCalibrated && poseDetectorReady ? 'pointer' : 'not-allowed',
+                cursor: isCalibrated && poseDetectorReady && !manualTrackingMode ? 'pointer' : 'not-allowed',
                 fontWeight: '600',
                 fontSize: '1rem'
               }}
             >
               {isProcessing ? '⏹ Cancel Processing' : '🤖 Analyze with AI'}
             </button>
+
+            {/* Tracking Quality Indicator */}
+            {trackingQuality && (
+              <div style={{
+                background: '#1e293b',
+                padding: '1rem',
+                borderRadius: '0.5rem',
+                borderLeft: `4px solid ${
+                  trackingQuality.rating === 'excellent' ? '#22c55e' :
+                  trackingQuality.rating === 'good' ? '#3b82f6' :
+                  trackingQuality.rating === 'fair' ? '#f59e0b' :
+                  trackingQuality.rating === 'manual' ? '#a78bfa' :
+                  '#ef4444'
+                }`
+              }}>
+                <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>📊 Tracking Quality</h3>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <span style={{
+                    fontSize: '1.25rem',
+                    fontWeight: 'bold',
+                    color: trackingQuality.rating === 'excellent' ? '#22c55e' :
+                           trackingQuality.rating === 'good' ? '#3b82f6' :
+                           trackingQuality.rating === 'fair' ? '#f59e0b' :
+                           trackingQuality.rating === 'manual' ? '#a78bfa' :
+                           '#ef4444',
+                    textTransform: 'uppercase'
+                  }}>
+                    {trackingQuality.rating === 'manual' ? '✏️ Manual' : trackingQuality.rating}
+                  </span>
+                  <span style={{ fontSize: '0.85rem', color: '#9ca3af' }}>
+                    ({trackingQuality.avgConfidence.toFixed(0)}% avg confidence)
+                  </span>
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                  <div>Good frames: {trackingQuality.goodFramePercent.toFixed(0)}%</div>
+                  <div>Missing frames: {trackingQuality.missingFrames} / {trackingQuality.totalFrames}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Quality Warning */}
+            {showQualityWarning && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid #ef4444',
+                padding: '0.75rem',
+                borderRadius: '0.5rem'
+              }}>
+                <div style={{ fontSize: '0.85rem', color: '#ef4444', fontWeight: '600', marginBottom: '0.25rem' }}>
+                  ⚠️ Low Tracking Quality Detected
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.5rem' }}>
+                  AI had difficulty tracking the athlete. This may be due to:
+                </div>
+                <ul style={{ fontSize: '0.7rem', color: '#64748b', margin: 0, paddingLeft: '1rem' }}>
+                  <li>Video recorded from too far away</li>
+                  <li>Multiple people in frame (use Athlete Selection)</li>
+                  <li>Poor lighting or video quality</li>
+                  <li>Athlete partially obscured</li>
+                </ul>
+                <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => {
+                      setManualTrackingMode(true);
+                      setShowQualityWarning(false);
+                    }}
+                    style={{ padding: '0.4rem 0.75rem', background: '#a78bfa', border: 'none', borderRadius: '0.25rem', color: '#ffffff', cursor: 'pointer', fontSize: '0.75rem' }}
+                  >
+                    Try Manual Mode
+                  </button>
+                  <button
+                    onClick={() => setShowQualityWarning(false)}
+                    style={{ padding: '0.4rem 0.75rem', background: '#374151', border: 'none', borderRadius: '0.25rem', color: '#9ca3af', cursor: 'pointer', fontSize: '0.75rem' }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
 
             {isProcessing && (
               <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
