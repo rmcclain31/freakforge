@@ -285,9 +285,9 @@ function Dashboard({ mode = 'selection' }) {
     if (statisticFilter.enabled && !athletePassesStatisticFilter(athlete)) {
       const { low, high, keepOutside } = statisticFilter;
       if (keepOutside) {
-        failures.push(`No z-scores outside range [${low}Ïƒ, ${high}Ïƒ]`);
+        failures.push(`No z-scores outside range [${low}σ, ${high}σ]`);
       } else {
-        failures.push(`Some z-scores outside range [${low}Ïƒ, ${high}Ïƒ]`);
+        failures.push(`Some z-scores outside range [${low}σ, ${high}σ]`);
       }
     }
 
@@ -476,7 +476,7 @@ function Dashboard({ mode = 'selection' }) {
       data: { labels: metrics.map(m => m.label), datasets },
       options: {
         responsive: true,
-        maintainAspectRatio: true,
+        maintainAspectRatio: false,
         scales: {
           r: {
             beginAtZero: true,
@@ -488,7 +488,7 @@ function Dashboard({ mode = 'selection' }) {
           }
         },
         plugins: {
-          legend: { display: athletesToDisplay.length > 1, labels: { color: '#fb923c', font: { size: 12 }, padding: 10 } },
+          legend: { display: false },
           tooltip: {
             callbacks: {
               label: (ctx) => {
@@ -545,7 +545,7 @@ function Dashboard({ mode = 'selection' }) {
       data: { labels: metrics.map(m => m.label), datasets },
       options: {
         responsive: true,
-        maintainAspectRatio: true,
+        maintainAspectRatio: false,
         scales: {
           r: {
             beginAtZero: true,
@@ -553,11 +553,11 @@ function Dashboard({ mode = 'selection' }) {
             min: 0,
             ticks: { stepSize: 25, color: '#a16207', backdropColor: 'transparent', font: { size: 11 } },
             grid: { color: '#78350f' },
-            pointLabels: { color: '#a78bfa', font: { size: 12, weight: '500' } }
+            pointLabels: { color: '#fbbf24', font: { size: 12, weight: '500' } }
           }
         },
         plugins: {
-          legend: { display: athletesToDisplay.length > 1, labels: { color: '#a78bfa', font: { size: 12 }, padding: 10 } },
+          legend: { display: false },
           tooltip: {
             callbacks: {
               label: (ctx) => {
@@ -646,19 +646,27 @@ function Dashboard({ mode = 'selection' }) {
       data: { labels: metrics.map(m => m.label), datasets },
       options: {
         responsive: true,
-        maintainAspectRatio: true,
+        maintainAspectRatio: false,
+        layout: {
+          padding: {
+            top: 20,
+            bottom: 20,
+            left: 40,
+            right: 40
+          }
+        },
         scales: {
           r: {
             beginAtZero: true,
             max: 100,
             min: 0,
-            ticks: { stepSize: 25, color: '#a16207', backdropColor: 'transparent', font: { size: 11 } },
+            ticks: { stepSize: 25, color: '#a16207', backdropColor: 'transparent', font: { size: 10 } },
             grid: { color: '#78350f' },
-            pointLabels: { color: '#ef4444', font: { size: 10, weight: '500' } }
+            pointLabels: { color: '#fbbf24', font: { size: 9, weight: '500' }, padding: 15 }
           }
         },
         plugins: {
-          legend: { display: athletesToDisplay.length > 1, labels: { color: '#ef4444', font: { size: 12 }, padding: 10 } },
+          legend: { display: false },
           tooltip: {
             callbacks: {
               label: (ctx) => {
@@ -793,7 +801,7 @@ function Dashboard({ mode = 'selection' }) {
               ticks: { stepSize: 25, color: '#64748b', backdropColor: 'transparent', font: { size: 9 } },
               grid: { color: '#374151' },
               pointLabels: {
-                color: type === 'attribute' ? '#a78bfa' : type === 'forged' ? '#ef4444' : '#fbbf24',
+                color: '#fbbf24',
                 font: { size: 10, weight: '500' }
               }
             }
@@ -937,14 +945,14 @@ function Dashboard({ mode = 'selection' }) {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ color: '#a78bfa', fontSize: '0.9rem' }}>ðŸ” Population Filters</span>
+            <span style={{ color: '#a78bfa', fontSize: '0.9rem' }}> Population Filters</span>
             {hasActiveFilters() && (
               <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', background: '#5b21b6', borderRadius: '0.25rem', color: '#c4b5fd' }}>
-                Active â€¢ {getFilteredPopulation().length} athletes
+                Active • {getFilteredPopulation().length} athletes
               </span>
             )}
           </div>
-          <span style={{ color: '#8b5cf6', fontSize: '1.2rem' }}>â–¼</span>
+          <span style={{ color: '#8b5cf6', fontSize: '1.2rem' }}>▼</span>
         </div>
       );
     }
@@ -961,21 +969,21 @@ function Dashboard({ mode = 'selection' }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
           <h3 style={{ fontSize: '1rem', color: '#a78bfa' }}>
-            ðŸ” Population Filters
+             Population Filters
             {hasActiveFilters() && (<span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', padding: '0.15rem 0.4rem', background: '#5b21b6', borderRadius: '0.25rem' }}>Active</span>)}
           </h3>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             {hasActiveFilters() && (
               <button onClick={clearAllFilters} style={{ padding: '0.3rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fbbf24', fontSize: '0.75rem', cursor: 'pointer' }}>Clear All</button>
             )}
-            <button style={{ padding: '0.3rem 0.6rem', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '0.25rem', color: '#93c5fd', fontSize: '0.75rem', cursor: 'pointer', opacity: 0.6 }} title="Coming soon">ðŸ’¾ Save Forged</button>
+            <button style={{ padding: '0.3rem 0.6rem', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '0.25rem', color: '#93c5fd', fontSize: '0.75rem', cursor: 'pointer', opacity: 0.6 }} title="Coming soon"> Save Forged</button>
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
           {/* Attributes section - now includes Position, State, Height, Weight, Grad Year */}
           <div>
-            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>â–² Attributes</h4>
+            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>▲ Attributes</h4>
             <div style={{ marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>Position</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
@@ -1004,7 +1012,7 @@ function Dashboard({ mode = 'selection' }) {
 
           {/* Standard section - Height/Weight ranges */}
           <div>
-            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>â— Standard</h4>
+            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>● Standard</h4>
             <div style={{ marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>Height (in)</div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -1033,7 +1041,7 @@ function Dashboard({ mode = 'selection' }) {
 
           {/* Statistics section - now last */}
           <div>
-            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}>ðŸ“Š Statistics</h4>
+            <h4 style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '0.5rem' }}> Statistics</h4>
             <div style={{ marginBottom: '0.5rem' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.75rem' }}>
                 <input
@@ -1042,7 +1050,7 @@ function Dashboard({ mode = 'selection' }) {
                   onChange={() => setStatisticFilter(prev => ({ ...prev, enabled: !prev.enabled }))}
                   style={{ cursor: 'pointer', accentColor: '#fbbf24' }}
                 />
-                <span style={{ color: '#fbbf24' }}>Use Ïƒ Filtering</span>
+                <span style={{ color: '#fbbf24' }}>Use σ Filtering</span>
               </label>
             </div>
 
@@ -1073,13 +1081,13 @@ function Dashboard({ mode = 'selection' }) {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: '#64748b', marginBottom: '0.5rem' }}>
-              <span>-3Ïƒ</span>
-              <span>0Ïƒ</span>
-              <span>+3Ïƒ</span>
+              <span>-3σ</span>
+              <span>0σ</span>
+              <span>+3σ</span>
             </div>
 
             <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: '0.5rem', textAlign: 'center' }}>
-              Range: [{statisticFilter.low > 0 ? '+' : ''}{statisticFilter.low}Ïƒ, {statisticFilter.high > 0 ? '+' : ''}{statisticFilter.high}Ïƒ]
+              Range: [{statisticFilter.low > 0 ? '+' : ''}{statisticFilter.low}σ, {statisticFilter.high > 0 ? '+' : ''}{statisticFilter.high}σ]
             </div>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.7rem', marginBottom: '0.5rem' }}>
@@ -1104,7 +1112,7 @@ function Dashboard({ mode = 'selection' }) {
                 style={{ cursor: 'pointer', accentColor: '#fbbf24' }}
               />
               <span style={{ color: recalcStatsFromFilters ? '#22c55e' : '#9ca3af' }}>
-                Recalc Ïƒ from filtered pop
+                Recalc σ from filtered pop
               </span>
             </label>
           </div>
@@ -1112,7 +1120,7 @@ function Dashboard({ mode = 'selection' }) {
 
         {hasActiveFilters() && (
           <div style={{ marginTop: '0.75rem', padding: '0.5rem', background: '#0f172a', borderRadius: '0.25rem', fontSize: '0.75rem', color: '#fbbf24' }}>
-            ðŸ“Š Filtered population: {getFilteredPopulation().length} athletes
+             Filtered population: {getFilteredPopulation().length} athletes
           </div>
         )}
 
@@ -1134,7 +1142,7 @@ function Dashboard({ mode = 'selection' }) {
             cursor: 'pointer'
           }}
         >
-          <span style={{ color: '#1e293b', fontSize: '0.8rem', fontWeight: 'bold' }}>â–²</span>
+          <span style={{ color: '#1e293b', fontSize: '0.8rem', fontWeight: 'bold' }}>▲</span>
         </div>
       </div>
     );
@@ -1148,7 +1156,7 @@ function Dashboard({ mode = 'selection' }) {
       {selectedAthleteObjects.length > 0 && (
         <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#422006', borderRadius: '0.5rem', border: '2px solid #ea580c' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>âœ“ Selected ({selectedAthleteObjects.length})</h4>
+            <h4 style={{ fontSize: '0.85rem', color: '#fb923c', fontWeight: '600' }}>Selected ({selectedAthleteObjects.length})</h4>
             <button onClick={clearSelectedAthletes} style={{ padding: '0.2rem 0.4rem', background: '#7c2d12', border: '1px solid #ea580c', borderRadius: '0.25rem', color: '#fdba74', fontSize: '0.7rem', cursor: 'pointer' }}>Clear</button>
           </div>
           {selectedAthleteObjects.map((athlete, index) => {
@@ -1161,7 +1169,7 @@ function Dashboard({ mode = 'selection' }) {
                   <input type="checkbox" checked={true} onChange={() => toggleAthleteSelection(athlete.id)} style={{ cursor: 'pointer', accentColor: colors.border }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: '0.8rem', fontWeight: '500', color: '#fbbf24', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{athlete.firstName} {athlete.lastName}</div>
-                    <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} â€¢ {athlete.state}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} • {athlete.state}</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.35rem', fontSize: '0.65rem', fontFamily: 'monospace' }}>
@@ -1180,11 +1188,11 @@ function Dashboard({ mode = 'selection' }) {
       )}
 
       <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.65rem', color: '#a16207' }}>
-        <span style={{ fontWeight: '600' }}>Ïƒ:</span>
+        <span style={{ fontWeight: '600' }}>σ:</span>
         <span style={{ color: '#ef4444' }}>3-</span>
         <span style={{ color: '#ef4444' }}>2-</span>
         <span style={{ color: '#ef4444' }}>1-</span>
-        <span style={{ color: '#94a3b8' }}>Â±1</span>
+        <span style={{ color: '#94a3b8' }}>±1</span>
         <span style={{ color: '#10b981' }}>1+</span>
         <span style={{ color: '#10b981' }}>2+</span>
         <span style={{ color: '#10b981' }}>3+</span>
@@ -1199,7 +1207,7 @@ function Dashboard({ mode = 'selection' }) {
               <input type="checkbox" checked={selectedAthletes.includes(athlete.id)} onChange={() => toggleAthleteSelection(athlete.id)} onClick={(e) => e.stopPropagation()} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: '500', color: '#fbbf24', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{athlete.firstName} {athlete.lastName}</div>
-                <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} â€¢ {athlete.state} â€¢ {athlete.gradYear}</div>
+                <div style={{ fontSize: '0.7rem', color: '#a16207' }}>{athlete.position} • {athlete.state} • {athlete.gradYear}</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.35rem', fontSize: '0.65rem', fontFamily: 'monospace' }}>
@@ -1245,7 +1253,7 @@ function Dashboard({ mode = 'selection' }) {
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#fbbf24', minWidth: '50px', textAlign: 'right' }}>{displayValue}</span>
                 <span style={{ color: sigma !== null ? (sigma > 0 ? '#10b981' : '#ef4444') : '#6b7280', fontSize: '0.85rem', minWidth: '60px', textAlign: 'left', fontFamily: 'monospace' }}>
-                  {sigma !== null ? `(${sigma > 0 ? '+' : ''}${sigma.toFixed(1)}Ïƒ)` : ''}
+                  {sigma !== null ? `(${sigma > 0 ? '+' : ''}${sigma.toFixed(1)}σ)` : ''}
                 </span>
               </div>
             </td>
@@ -1256,7 +1264,7 @@ function Dashboard({ mode = 'selection' }) {
 
     return (
       <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem', borderLeft: '4px solid #fbbf24' }}>
-        <h3 style={{ marginBottom: '1rem', fontSize: '1rem', color: '#fb923c' }}>ðŸ“Š Athlete Comparison</h3>
+        <h3 style={{ marginBottom: '1rem', fontSize: '1rem', color: '#fb923c' }}> Athlete Comparison</h3>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
@@ -1269,9 +1277,9 @@ function Dashboard({ mode = 'selection' }) {
               </tr>
             </thead>
             <tbody>
-              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>â–² Attribute Data</td></tr>
+              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>▲ Attribute Data</td></tr>
               {attributeMetrics.map(m => renderMetricRow(m, m.format))}
-              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>â— Standard Data</td></tr>
+              <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem' }}>● Standard Data</td></tr>
               {standardMetrics.map(m => renderMetricRow(m))}
               <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.75rem 0.5rem 0.25rem', color: '#fbbf24', fontWeight: '700', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><ForgedGlyph size="0.85rem" color="#fbbf24" /> Forged Data</td></tr>
               <tr><td colSpan={selectedAthleteObjects.length + 1} style={{ padding: '0.5rem', color: '#64748b', fontSize: '0.8rem' }}>Select metrics in Metric Explorer to add forged ratios</td></tr>
@@ -1288,6 +1296,128 @@ function Dashboard({ mode = 'selection' }) {
       <button onClick={() => setMode('iso')} style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', background: mode === 'iso' ? '#ea580c' : 'transparent', border: 'none', borderRadius: '0.2rem', color: mode === 'iso' ? '#fef3c7' : '#94a3b8', cursor: 'pointer', fontWeight: mode === 'iso' ? '600' : '400' }}>Iso</button>
     </div>
   );
+
+  // Athlete legend component for stacked radar charts
+  const AthleteLegend = ({ athleteList }) => (
+    <div style={{
+      minWidth: '140px',
+      maxWidth: '160px',
+      padding: '0.5rem',
+      background: '#0f172a',
+      borderRadius: '0.375rem',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      gap: '0.4rem'
+    }}>
+      <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', marginBottom: '0.25rem', textTransform: 'uppercase' }}>Athletes</div>
+      {athleteList.map((athlete, index) => {
+        const colorIndex = index % ATHLETE_COLORS.length;
+        const colors = ATHLETE_COLORS[colorIndex];
+        return (
+          <div key={athlete.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{
+              width: '12px',
+              height: '12px',
+              borderRadius: '50%',
+              background: colors.border,
+              border: '2px solid #fff',
+              flexShrink: 0
+            }}></div>
+            <span style={{
+              fontSize: '0.75rem',
+              color: colors.border,
+              fontWeight: '500',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}>
+              {athlete.firstName} {athlete.lastName.charAt(0)}.
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // Units legend component for stacked radar charts
+  const UnitsLegend = ({ metrics, type }) => {
+    // Filter out placeholder metrics
+    const realMetrics = metrics.filter(m => !m.isPlaceholder && m.label);
+    if (realMetrics.length === 0) return null;
+
+    return (
+      <div style={{
+        minWidth: '140px',
+        maxWidth: '180px',
+        padding: '0.5rem',
+        background: '#0f172a',
+        borderRadius: '0.375rem',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: '0.3rem'
+      }}>
+        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', marginBottom: '0.25rem', textTransform: 'uppercase' }}>Units</div>
+        {realMetrics.map((metric, index) => {
+          let unit = '';
+          if (type === 'forged') {
+            const parts = metric.key.split(' / ');
+            if (parts.length === 2) {
+              const numKey = METRIC_NAME_TO_KEY[parts[0].trim()];
+              const denKey = METRIC_NAME_TO_KEY[parts[1].trim()];
+              const numUnit = METRIC_UNITS[numKey] || '';
+              const denUnit = METRIC_UNITS[denKey] || '';
+              unit = numUnit && denUnit ? `${numUnit}/${denUnit}` : '';
+            }
+          } else {
+            unit = METRIC_UNITS[metric.key] || '';
+          }
+          return (
+            <div key={index} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+              <span style={{
+                fontSize: '0.7rem',
+                color: '#fbbf24',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                flex: 1
+              }}>
+                {metric.label}
+              </span>
+              <span style={{
+                fontSize: '0.7rem',
+                color: '#94a3b8',
+                fontFamily: 'monospace',
+                flexShrink: 0
+              }}>
+                ({unit || '-'})
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Get metrics for each chart type (for legends)
+  const getStandardMetrics = () => arrangeForPentagon([
+    { key: 'dash40', label: '40-Yard Dash' },
+    { key: 'verticalJump', label: 'Vertical Jump' },
+    { key: 'broadJump', label: 'Broad Jump' },
+    { key: 'proAgility', label: 'Pro Agility' },
+    { key: 'lDrill', label: 'L-Drill' }
+  ]);
+
+  const getAttributeMetrics = () => arrangeForPentagon(ensureMinimumAxes([
+    { key: 'height', label: 'Height' },
+    { key: 'weight', label: 'Weight' }
+  ], 5));
+
+  const getForgedMetrics = () => arrangeForPentagon(ensureMinimumAxes(
+    forgedAxes.map(axis => ({ key: axis.formula, label: axis.label })),
+    5
+  ));
 
   // Render iso charts grid
   const renderIsoCharts = (type, athletesToDisplay) => {
@@ -1353,8 +1483,12 @@ function Dashboard({ mode = 'selection' }) {
               </div>
               {standardViewMode === 'stack' ? (
                 <>
-                  <div style={{ position: 'relative', height: '320px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '400px', height: '100%' }}><canvas ref={chartRef}></canvas></div>
+                  <div style={{ display: 'flex', alignItems: 'stretch', gap: '1rem' }}>
+                    <AthleteLegend athleteList={athletesToDisplay} />
+                    <div style={{ flex: 1, position: 'relative', minHeight: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <canvas ref={chartRef} style={{ maxWidth: '100%', maxHeight: '100%' }}></canvas>
+                    </div>
+                    <UnitsLegend metrics={getStandardMetrics()} type="standard" />
                   </div>
                   <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                 </>
@@ -1371,8 +1505,12 @@ function Dashboard({ mode = 'selection' }) {
               </div>
               {attributeViewMode === 'stack' ? (
                 <>
-                  <div style={{ position: 'relative', height: '320px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '400px', height: '100%' }}><canvas ref={physicalChartRef}></canvas></div>
+                  <div style={{ display: 'flex', alignItems: 'stretch', gap: '1rem' }}>
+                    <AthleteLegend athleteList={athletesToDisplay} />
+                    <div style={{ flex: 1, position: 'relative', minHeight: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <canvas ref={physicalChartRef} style={{ maxWidth: '100%', maxHeight: '100%' }}></canvas>
+                    </div>
+                    <UnitsLegend metrics={getAttributeMetrics()} type="attribute" />
                   </div>
                   <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                 </>
@@ -1397,14 +1535,18 @@ function Dashboard({ mode = 'selection' }) {
                   {forgedAxes.map((axis, index) => (
                     <div key={index} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0.5rem', background: '#422006', borderRadius: '1rem', fontSize: '0.7rem', color: '#fdba74', border: '1px solid #78350f' }}>
                       <span>{axis.label}</span>
-                      <button onClick={() => removeForgedAxis(axis.formula)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0', fontSize: '0.9rem', lineHeight: '1' }}>Ã—</button>
+                      <button onClick={() => removeForgedAxis(axis.formula)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0', fontSize: '0.9rem', lineHeight: '1' }}>×</button>
                     </div>
                   ))}
                 </div>
                 {forgedViewMode === 'stack' ? (
                   <>
-                    <div style={{ position: 'relative', height: '280px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <div style={{ width: '400px', height: '100%' }}><canvas ref={forgedChartRef}></canvas></div>
+                    <div style={{ display: 'flex', alignItems: 'stretch', gap: '1rem' }}>
+                      <AthleteLegend athleteList={athletesToDisplay} />
+                      <div style={{ flex: 1, position: 'relative', minHeight: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <canvas ref={forgedChartRef} style={{ maxWidth: '100%', maxHeight: '100%' }}></canvas>
+                      </div>
+                      <UnitsLegend metrics={getForgedMetrics()} type="forged" />
                     </div>
                     <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#a16207', textAlign: 'center' }}>Percentile vs. {athletes.length} Athletes</div>
                   </>

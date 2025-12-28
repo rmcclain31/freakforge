@@ -140,6 +140,10 @@ function VideoAnalysis() {
   const [saveMode, setSaveMode] = useState('individual'); // 'individual' or 'default'
   const [defaultSavePath, setDefaultSavePath] = useState('');
 
+  // Recording preview resize
+  const [recordingPreviewHeight, setRecordingPreviewHeight] = useState(240); // Default smaller height
+  const [isResizingPreview, setIsResizingPreview] = useState(false);
+
   // Calibration state
   const [selectedDrill, setSelectedDrill] = useState('custom');
   const [calibrationMode, setCalibrationMode] = useState('line');
@@ -206,6 +210,13 @@ function VideoAnalysis() {
       }
     };
   }, [recordingStream, recordedVideoUrl]);
+
+  // Keep video preview connected to stream during recording
+  useEffect(() => {
+    if (recordingVideoRef.current && recordingStream) {
+      recordingVideoRef.current.srcObject = recordingStream;
+    }
+  }, [recordingStream, isRecording]);
 
   // Get selected athlete object
   const selectedAthleteObjects = athletes.filter(a => selectedAthletes.includes(a.id));
@@ -1034,20 +1045,70 @@ function VideoAnalysis() {
       </div>
 
       {/* Live Video Preview */}
-      <div style={{ position: 'relative', background: '#000', borderRadius: '0.375rem', overflow: 'hidden', marginBottom: '1rem' }}>
-        <video
-          ref={recordingVideoRef}
-          autoPlay
-          muted
-          playsInline
-          style={{ width: '100%', display: 'block' }}
-        />
-        {isRecording && (
-          <div style={{ position: 'absolute', top: '1rem', right: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(220, 38, 38, 0.9)', padding: '0.4rem 0.8rem', borderRadius: '0.375rem' }}>
-            <span style={{ width: '12px', height: '12px', background: '#ffffff', borderRadius: '50%', animation: 'pulse 1s infinite' }}></span>
-            <span style={{ color: '#ffffff', fontWeight: '600', fontSize: '0.9rem' }}>REC {formatDuration(recordingDuration)}</span>
+      <div style={{ position: 'relative', marginBottom: '1rem' }}>
+        <div style={{
+          position: 'relative',
+          background: '#000',
+          borderRadius: '0.375rem',
+          overflow: 'hidden',
+          height: `${recordingPreviewHeight}px`
+        }}>
+          <video
+            ref={recordingVideoRef}
+            autoPlay
+            muted
+            playsInline
+            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+          />
+          {isRecording && (
+            <div style={{ position: 'absolute', top: '1rem', right: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(220, 38, 38, 0.9)', padding: '0.4rem 0.8rem', borderRadius: '0.375rem' }}>
+              <span style={{ width: '12px', height: '12px', background: '#ffffff', borderRadius: '50%', animation: 'pulse 1s infinite' }}></span>
+              <span style={{ color: '#ffffff', fontWeight: '600', fontSize: '0.9rem' }}>REC {formatDuration(recordingDuration)}</span>
+            </div>
+          )}
+          {/* Preview size indicator */}
+          <div style={{ position: 'absolute', bottom: '0.5rem', left: '0.5rem', fontSize: '0.65rem', color: '#64748b', background: 'rgba(0,0,0,0.5)', padding: '0.15rem 0.3rem', borderRadius: '0.2rem' }}>
+            {recordingPreviewHeight}px
           </div>
-        )}
+        </div>
+        {/* Resize handle */}
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setIsResizingPreview(true);
+            const startY = e.clientY;
+            const startHeight = recordingPreviewHeight;
+
+            const onMouseMove = (moveEvent) => {
+              const delta = moveEvent.clientY - startY;
+              const newHeight = Math.max(120, Math.min(600, startHeight + delta));
+              setRecordingPreviewHeight(newHeight);
+            };
+
+            const onMouseUp = () => {
+              setIsResizingPreview(false);
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+          }}
+          style={{
+            height: '8px',
+            background: isResizingPreview ? '#fbbf24' : '#374151',
+            borderRadius: '0 0 0.375rem 0.375rem',
+            cursor: 'ns-resize',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'background 0.2s'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = '#4b5563'}
+          onMouseLeave={(e) => { if (!isResizingPreview) e.currentTarget.style.background = '#374151'; }}
+        >
+          <div style={{ width: '40px', height: '3px', background: '#64748b', borderRadius: '2px' }}></div>
+        </div>
       </div>
 
       {/* Recording Controls */}
@@ -1195,13 +1256,35 @@ function VideoAnalysis() {
 
         {saveMode === 'default' && (
           <div style={{ marginTop: '0.5rem' }}>
-            <input
-              type="text"
-              placeholder="Enter default folder path (e.g., C:\Videos\Drills)"
-              value={defaultSavePath}
-              onChange={(e) => setDefaultSavePath(e.target.value)}
-              style={{ width: '100%', padding: '0.4rem', background: '#1e293b', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}
-            />
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                type="text"
+                placeholder="Enter default folder path (e.g., C:\Videos\Drills)"
+                value={defaultSavePath}
+                onChange={(e) => setDefaultSavePath(e.target.value)}
+                style={{ flex: 1, padding: '0.4rem', background: '#1e293b', border: '1px solid #374151', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}
+              />
+              <button
+                onClick={async () => {
+                  try {
+                    if ('showDirectoryPicker' in window) {
+                      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                      setDefaultSavePath(dirHandle.name);
+                      // Store the handle for later use (would need additional state management for full implementation)
+                    } else {
+                      alert('Folder picker not supported in this browser. Please type the path manually.');
+                    }
+                  } catch (err) {
+                    if (err.name !== 'AbortError') {
+                      console.error('Folder selection error:', err);
+                    }
+                  }
+                }}
+                style={{ padding: '0.4rem 0.75rem', background: '#374151', border: '1px solid #4b5563', borderRadius: '0.375rem', color: '#9ca3af', cursor: 'pointer', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+              >
+                📁 Browse...
+              </button>
+            </div>
             <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.25rem' }}>
               Note: Browser security may still prompt for confirmation
             </div>
