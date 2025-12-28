@@ -22,10 +22,40 @@ const MAX_FORGED_AXES = 8;
 const GRAPH_START_PERCENT = 12.5;
 const GRAPH_END_PERCENT = 87.5;
 
+// Reusable ForgedGlyph component
+const ForgedGlyph = ({ size = '1rem', color = '#ef4444' }) => {
+  const fontSize = typeof size === 'string' ? `calc(${size} * 1.2)` : `${size * 1.2}px`;
+  return (
+    <span style={{
+      position: 'relative',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontStyle: 'italic',
+      fontWeight: 'bold',
+      fontFamily: 'Georgia, serif',
+      fontSize,
+      color,
+      lineHeight: 1
+    }}>
+      <span style={{ position: 'relative', zIndex: 1 }}>f</span>
+      <span style={{
+        position: 'absolute',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: '50%',
+        height: '2px',
+        background: color,
+        zIndex: 2
+      }}></span>
+    </span>
+  );
+};
+
 function FreakFinder() {
   const [selectedAthlete, setSelectedAthlete] = useState(null);
   const [athletes, setAthletes] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedMetrics, setSelectedMetrics] = useState([]);
   const [hoveredMetricInfo, setHoveredMetricInfo] = useState(null);
   const [hoveredPoint, setHoveredPoint] = useState(null);
@@ -37,22 +67,40 @@ function FreakFinder() {
   const [showAthletic, setShowAthletic] = useState(true);
   const [showForged, setShowForged] = useState(true);
 
-  const [zScoreFilterLow, setZScoreFilterLow] = useState(0);
-  const [zScoreFilterHigh, setZScoreFilterHigh] = useState(0);
-  const [applyFiltersToList, setApplyFiltersToList] = useState(false);
   const [draggingHandle, setDraggingHandle] = useState(null);
 
   const canvasRef = useRef(null);
   const sliderContainerRef = useRef(null);
   const drawnMetricsRef = useRef([]);
 
-  const { selectedAthletes, toggleAthleteSelection, clearSelectedAthletes, addForgedAxis, removeForgedAxis, forgedAxes } = useAppContext();
+  // Use shared state from AppContext
+  const {
+    selectedAthletes,
+    toggleAthleteSelection,
+    clearSelectedAthletes,
+    addForgedAxis,
+    removeForgedAxis,
+    forgedAxes,
+    // Shared sidebar state
+    searchQuery,
+    setSearchQuery,
+    filters,
+    toggleFilter,
+    hasActiveFilters,
+    // Statistic filter
+    statisticFilter,
+    // ME slider state from context
+    meZScoreFilterLow,
+    setMeZScoreFilterLow,
+    meZScoreFilterHigh,
+    setMeZScoreFilterHigh
+  } = useAppContext();
+
   const jitterMapRef = useRef(new Map());
 
   useEffect(() => {
     dataService.loadData().then(data => {
       setAthletes(data.athletes);
-      if (data.athletes.length > 0) setSelectedAthlete(data.athletes[0]);
     });
   }, []);
 
@@ -84,8 +132,8 @@ function FreakFinder() {
     if (metricType === 'personal' && !showPersonal) return false;
     if (metricType === 'athletic' && !showAthletic) return false;
     if (metricType === 'forged' && !showForged) return false;
-    if (zScoreFilterLow !== 0 || zScoreFilterHigh !== 0) {
-      if (metric.sigma > zScoreFilterLow && metric.sigma < zScoreFilterHigh) return false;
+    if (meZScoreFilterLow !== 0 || meZScoreFilterHigh !== 0) {
+      if (metric.sigma > meZScoreFilterLow && metric.sigma < meZScoreFilterHigh) return false;
     }
     return true;
   };
@@ -118,6 +166,51 @@ function FreakFinder() {
     if (p1[1] === 'Weight' && p2[1] !== 'Weight') return [m1, m2];
     if (p2[1] === 'Weight' && p1[1] !== 'Weight') return [m2, m1];
     return [m1, m2];
+  };
+
+  // Calculate all z-scores for an athlete (for statistic filter)
+  const getAthleteZScores = (athlete) => {
+    const metrics = ['dash40', 'verticalJump', 'broadJump', 'proAgility', 'lDrill', 'height', 'weight'];
+    const zScores = [];
+    metrics.forEach(key => {
+      const value = athlete[key];
+      if (value) {
+        const sigma = dataService.calculateSigma(key, value);
+        zScores.push({ key, sigma });
+      }
+    });
+    return zScores;
+  };
+
+  // Check if athlete passes statistic filter
+  const athletePassesStatisticFilter = (athlete) => {
+    if (!statisticFilter.enabled) return true;
+
+    const zScores = getAthleteZScores(athlete);
+    if (zScores.length === 0) return false;
+
+    const { low, high, keepOutside } = statisticFilter;
+
+    if (keepOutside) {
+      return zScores.some(z => z.sigma >= high || z.sigma <= low);
+    } else {
+      return zScores.every(z => z.sigma >= low && z.sigma <= high);
+    }
+  };
+
+  // #1: Filter population - same as Dashboard
+  const getFilteredPopulation = () => {
+    return athletes.filter(athlete => {
+      if (filters.positions.length > 0 && !filters.positions.includes(athlete.position)) return false;
+      if (filters.states.length > 0 && !filters.states.includes(athlete.state)) return false;
+      if (filters.gradYears.length > 0 && !filters.gradYears.includes(athlete.gradYear)) return false;
+      if (filters.heightRange.min !== null && athlete.height < filters.heightRange.min) return false;
+      if (filters.heightRange.max !== null && athlete.height > filters.heightRange.max) return false;
+      if (filters.weightRange.min !== null && athlete.weight < filters.weightRange.min) return false;
+      if (filters.weightRange.max !== null && athlete.weight > filters.weightRange.max) return false;
+      if (!athletePassesStatisticFilter(athlete)) return false;
+      return true;
+    });
   };
 
   const calculateSigmaBands = (athlete) => {
@@ -199,16 +292,17 @@ function FreakFinder() {
     return calculated;
   };
 
+  // Only show metrics for selected athletes (checkbox selection)
   const allAthletesMetrics = useMemo(() => {
-    const athletesToShow = selectedAthletes.length > 0
-      ? athletes.filter(a => selectedAthletes.includes(a.id))
-      : selectedAthlete ? [selectedAthlete] : [];
+    if (selectedAthletes.length === 0) return [];
+
+    const athletesToShow = athletes.filter(a => selectedAthletes.includes(a.id));
     return athletesToShow.map((athlete, index) => ({
       athlete,
       colorIndex: index % ATHLETE_COLORS.length,
       metrics: calculateMetricsForAthlete(athlete)
     }));
-  }, [selectedAthletes, selectedAthlete, athletes]);
+  }, [selectedAthletes, athletes]);
 
   const mergeReciprocals = (metrics) => {
     const processed = [];
@@ -286,6 +380,7 @@ function FreakFinder() {
     } else { ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill(); }
   };
 
+  // Always draw bell curve, even with no data points
   const drawBellCurve = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -305,6 +400,7 @@ function FreakFinder() {
     const endX = width * GRAPH_END_PERCENT / 100;
     const graphWidth = endX - startX;
 
+    // Draw vertical grid lines
     for (let s = -3; s <= 3; s += 0.5) {
       const x = startX + ((s + 3) / 6) * graphWidth;
       const isFullSigma = s % 1 === 0;
@@ -317,6 +413,7 @@ function FreakFinder() {
       ctx.stroke();
     }
 
+    // Draw bell curve
     ctx.strokeStyle = '#d97706';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -328,6 +425,7 @@ function FreakFinder() {
     }
     ctx.stroke();
 
+    // Draw sigma labels
     ctx.font = 'bold 13px sans-serif';
     ctx.fillStyle = '#f59e0b';
     for (let s = -3; s <= 3; s++) {
@@ -337,6 +435,7 @@ function FreakFinder() {
       ctx.fillText(label, x, height * 0.72 + 16);
     }
 
+    // Draw center dashed line
     ctx.strokeStyle = '#fb923c';
     ctx.lineWidth = 2;
     ctx.setLineDash([5, 5]);
@@ -346,16 +445,17 @@ function FreakFinder() {
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // Draw slider range indicator lines when dragging
     if (draggingHandle) {
       ctx.strokeStyle = '#fbbf24';
       ctx.lineWidth = 2;
       ctx.setLineDash([3, 3]);
       if (draggingHandle === 'low' || draggingHandle === 'both') {
-        const lowX = startX + ((zScoreFilterLow + 3) / 6) * graphWidth;
+        const lowX = startX + ((meZScoreFilterLow + 3) / 6) * graphWidth;
         ctx.beginPath(); ctx.moveTo(lowX, 20); ctx.lineTo(lowX, height * 0.72); ctx.stroke();
       }
       if (draggingHandle === 'high' || draggingHandle === 'both') {
-        const highX = startX + ((zScoreFilterHigh + 3) / 6) * graphWidth;
+        const highX = startX + ((meZScoreFilterHigh + 3) / 6) * graphWidth;
         ctx.beginPath(); ctx.moveTo(highX, 20); ctx.lineTo(highX, height * 0.72); ctx.stroke();
       }
       ctx.setLineDash([]);
@@ -364,21 +464,25 @@ function FreakFinder() {
     const baselineY = height * 0.40;
     drawnMetricsRef.current = [];
 
-    allAthletesMetrics.forEach(({ athlete, colorIndex, metrics }) => {
-      const displayMetrics = mergeReciprocals(metrics);
-      const colors = ATHLETE_COLORS[colorIndex];
-      displayMetrics.forEach((metric) => {
-        if (!isMetricVisible(metric)) return;
-        const sigma = Math.max(-3.5, Math.min(3.5, metric.sigma));
-        const x = startX + ((sigma + 3) / 6) * graphWidth;
-        const y = baselineY + metric.jitter;
-        const isHovered = hoveredCardMetric === metric.formula || (hoveredPoint && Math.abs(hoveredPoint.x - x) < 2 && Math.abs(hoveredPoint.y - y) < 2);
-        const isSelected = selectedMetrics.some(sm => sm.formula === metric.formula);
-        drawMetricShape(ctx, x, y, getMetricType(metric), colors.fill, isHovered, isSelected);
-        drawnMetricsRef.current.push({ x, y, formula: metric.formula, sigma: metric.sigma, value: metric.value, colorIndex, athleteId: athlete.id });
+    // Only draw data points if there are selected athletes
+    if (allAthletesMetrics.length > 0) {
+      allAthletesMetrics.forEach(({ athlete, colorIndex, metrics }) => {
+        const displayMetrics = mergeReciprocals(metrics);
+        const colors = ATHLETE_COLORS[colorIndex];
+        displayMetrics.forEach((metric) => {
+          if (!isMetricVisible(metric)) return;
+          const sigma = Math.max(-3.5, Math.min(3.5, metric.sigma));
+          const x = startX + ((sigma + 3) / 6) * graphWidth;
+          const y = baselineY + metric.jitter;
+          const isHovered = hoveredCardMetric === metric.formula || (hoveredPoint && Math.abs(hoveredPoint.x - x) < 2 && Math.abs(hoveredPoint.y - y) < 2);
+          const isSelected = selectedMetrics.some(sm => sm.formula === metric.formula);
+          drawMetricShape(ctx, x, y, getMetricType(metric), colors.fill, isHovered, isSelected);
+          drawnMetricsRef.current.push({ x, y, formula: metric.formula, sigma: metric.sigma, value: metric.value, colorIndex, athleteId: athlete.id });
+        });
       });
-    });
+    }
 
+    // Draw hover tooltip
     if (hoveredMetricInfo) {
       const legendX = width - 220, legendY = 12, legendWidth = 205, legendHeight = 80;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
@@ -406,6 +510,7 @@ function FreakFinder() {
       ctx.fillText(`${hoveredMetricInfo.value.toFixed(3)} ${getMetricUnits(hoveredMetricInfo.formula)}`, valueX, currentY);
     }
 
+    // Draw athlete legend if multiple athletes
     if (allAthletesMetrics.length > 1) {
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'left';
@@ -422,11 +527,20 @@ function FreakFinder() {
         ctx.fillText(`${athlete.firstName} ${athlete.lastName}`, 28, legendY + 4);
       });
     }
+
+    // Show message when no athletes selected
+    if (allAthletesMetrics.length === 0) {
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.textAlign = 'center';
+      ctx.fillText('Select athletes using checkboxes to view metrics', width / 2, height * 0.45);
+    }
   };
 
+  // Always draw bell curve, even when no athletes selected
   useEffect(() => {
-    if (allAthletesMetrics.length > 0 && canvasRef.current) drawBellCurve();
-  }, [allAthletesMetrics, hoveredPoint, hoveredMetricInfo, selectedMetrics, hoveredCardMetric, hoveredAthleteColor, showPersonal, showAthletic, showForged, zScoreFilterLow, zScoreFilterHigh, draggingHandle]);
+    if (canvasRef.current) drawBellCurve();
+  }, [allAthletesMetrics, hoveredPoint, hoveredMetricInfo, selectedMetrics, hoveredCardMetric, hoveredAthleteColor, showPersonal, showAthletic, showForged, meZScoreFilterLow, meZScoreFilterHigh, draggingHandle]);
 
   const handleCanvasClick = (e) => {
     const canvas = canvasRef.current;
@@ -488,6 +602,7 @@ function FreakFinder() {
     return Math.round(value * 100) / 100;
   };
 
+  // Use context setters for slider values
   const handleSliderDrag = (handle, e) => {
     e.preventDefault();
     setDraggingHandle(handle);
@@ -502,8 +617,8 @@ function FreakFinder() {
       const percent = Math.max(0, Math.min(1, x / sliderWidth));
       const rawValue = percent * 6 - 3;
       const snappedValue = snapToHalfSigma(rawValue);
-      if (handle === 'low') { if (snappedValue <= zScoreFilterHigh) setZScoreFilterLow(snappedValue); }
-      else { if (snappedValue >= zScoreFilterLow) setZScoreFilterHigh(snappedValue); }
+      if (handle === 'low') { if (snappedValue <= meZScoreFilterHigh) setMeZScoreFilterLow(snappedValue); }
+      else { if (snappedValue >= meZScoreFilterLow) setMeZScoreFilterHigh(snappedValue); }
     };
     const onMouseUp = () => {
       setDraggingHandle(null);
@@ -514,9 +629,15 @@ function FreakFinder() {
     document.addEventListener('mouseup', onMouseUp);
   };
 
+  // #1: Apply filters to athlete list
   const filteredAthletes = searchQuery ? dataService.searchAthletes(searchQuery) : athletes;
+  const filteredPopulation = getFilteredPopulation();
+
+  // Sidebar shows all athletes (filtered by search only)
+  const displayAthletes = filteredAthletes;
+
   const selectedAthleteObjects = athletes.filter(a => selectedAthletes.includes(a.id));
-  const unselectedAthletes = filteredAthletes.filter(a => !selectedAthletes.includes(a.id));
+  const unselectedAthletes = displayAthletes.filter(a => !selectedAthletes.includes(a.id));
 
   const getAllMetricsForCards = () => {
     if (allAthletesMetrics.length === 0) return [];
@@ -588,11 +709,6 @@ function FreakFinder() {
         <span style={{ color: '#10b981' }}>3+</span>
       </div>
 
-      <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
-        <input type="checkbox" checked={applyFiltersToList} onChange={() => setApplyFiltersToList(!applyFiltersToList)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
-        <span style={{ color: '#a16207' }}>Apply filters to list</span>
-      </div>
-
       <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.4rem' }}>{unselectedAthletes.length} athletes</div>
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {unselectedAthletes.slice(0, 50).map(athlete => {
@@ -626,51 +742,56 @@ function FreakFinder() {
     <div style={{ display: 'flex', height: '100%' }}>
       {renderSidebar()}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {allAthletesMetrics.length > 0 ? (
-          <>
-            <div style={{ padding: '0.75rem', borderBottom: '1px solid #78350f' }}>
-              {allAthletesMetrics.length === 1 && (
-                <div style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button onClick={() => exportAthleteToPDF(allAthletesMetrics[0].athlete, allAthletesMetrics[0].metrics, dataService.getStatistics())} style={{ padding: '0.4rem 0.8rem', background: '#ea580c', border: 'none', borderRadius: '0.375rem', color: '#fef3c7', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}>📄 Export</button>
-                </div>
-              )}
-              {maxAxesMessage && (<div style={{ marginBottom: '0.5rem', padding: '0.4rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}>⚠️ Maximum {MAX_FORGED_AXES} axes selected</div>)}
-              <div style={{ background: '#1e293b', padding: '0.5rem', borderRadius: '0.5rem', borderLeft: '4px solid #ea580c' }}>
-                <canvas ref={canvasRef} onClick={handleCanvasClick} onMouseMove={handleCanvasHover} style={{ width: '100%', height: '280px', borderRadius: '0.375rem' }} />
-                <div ref={sliderContainerRef} style={{ marginTop: '0.25rem', position: 'relative', height: '20px' }}>
-                  <div style={{ position: 'absolute', top: '8px', left: `${GRAPH_START_PERCENT}%`, width: `${GRAPH_END_PERCENT - GRAPH_START_PERCENT}%`, height: '4px', background: '#374151', borderRadius: '2px' }}></div>
-                  <div style={{ position: 'absolute', top: '8px', left: `${GRAPH_START_PERCENT + ((zScoreFilterLow + 3) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, width: `${((zScoreFilterHigh - zScoreFilterLow) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, height: '4px', background: '#7c2d12', borderRadius: '2px' }}></div>
-                  <div style={{ position: 'absolute', left: `${GRAPH_START_PERCENT + ((zScoreFilterLow + 3) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, top: '3px', width: '12px', height: '12px', background: draggingHandle === 'low' ? '#fbbf24' : '#ea580c', borderRadius: '50%', transform: 'translateX(-50%)', cursor: 'grab', border: '2px solid #fbbf24', zIndex: 3 }} onMouseDown={(e) => handleSliderDrag('low', e)} />
-                  <div style={{ position: 'absolute', left: `${GRAPH_START_PERCENT + ((zScoreFilterHigh + 3) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, top: '3px', width: '12px', height: '12px', background: draggingHandle === 'high' ? '#fbbf24' : '#ea580c', borderRadius: '50%', transform: 'translateX(-50%)', cursor: 'grab', border: '2px solid #fbbf24', zIndex: 3 }} onMouseDown={(e) => handleSliderDrag('high', e)} />
-                </div>
-                <div style={{ marginTop: '0.25rem', display: 'flex', gap: '0.75rem', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showPersonal ? 1 : 0.5 }}>
-                    <input type="checkbox" checked={showPersonal} onChange={() => setShowPersonal(!showPersonal)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
-                    <span style={{ color: '#fb923c' }}>▲</span><span style={{ color: '#a16207' }}>Attribute</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showAthletic ? 1 : 0.5 }}>
-                    <input type="checkbox" checked={showAthletic} onChange={() => setShowAthletic(!showAthletic)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
-                    <span style={{ color: '#fb923c' }}>●</span><span style={{ color: '#a16207' }}>Standard</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showForged ? 1 : 0.5 }}>
-                    <input type="checkbox" checked={showForged} onChange={() => setShowForged(!showForged)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
-                    <span style={{ color: '#fb923c', fontStyle: 'italic', fontWeight: 'bold', fontFamily: 'Georgia, serif' }}>f</span><span style={{ color: '#a16207' }}>Forged</span>
-                  </label>
-                  <span style={{ color: '#78350f' }}>|</span>
-                  <span style={{ color: '#fbbf24', fontSize: '0.65rem' }}>Selected: {selectedMetrics.length}/{MAX_FORGED_AXES}</span>
-                </div>
-              </div>
+        {/* Always show bell curve area */}
+        <div style={{ padding: '0.75rem', borderBottom: '1px solid #78350f' }}>
+          {allAthletesMetrics.length === 1 && (
+            <div style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => exportAthleteToPDF(allAthletesMetrics[0].athlete, allAthletesMetrics[0].metrics, dataService.getStatistics())} style={{ padding: '0.4rem 0.8rem', background: '#ea580c', border: 'none', borderRadius: '0.375rem', color: '#fef3c7', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}>📄 Export</button>
             </div>
-            <div style={{ flex: 1, padding: '0.75rem', overflowY: 'auto' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                {allMetricsForCards.map((metricData, index) => {
-                  const isSelected = selectedMetrics.some(sm => sm.formula === metricData.formula);
-                  return (<MetricCard key={index} metricData={metricData} isSelected={isSelected} onClick={() => { const metric = metricData.athleteData[0]?.metric; if (metric) toggleMetricSelection(metric); }} onMouseEnter={() => setHoveredCardMetric(metricData.formula)} onMouseLeave={() => setHoveredCardMetric(null)} getSigmaColor={getSigmaColor} />);
-                })}
-              </div>
+          )}
+          {maxAxesMessage && (<div style={{ marginBottom: '0.5rem', padding: '0.4rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.8rem' }}>⚠️ Maximum {MAX_FORGED_AXES} axes selected</div>)}
+          <div style={{ background: '#1e293b', padding: '0.5rem', borderRadius: '0.5rem', borderLeft: '4px solid #ea580c' }}>
+            <canvas ref={canvasRef} onClick={handleCanvasClick} onMouseMove={handleCanvasHover} style={{ width: '100%', height: '280px', borderRadius: '0.375rem' }} />
+            {/* Slider using context state */}
+            <div ref={sliderContainerRef} style={{ marginTop: '0.25rem', position: 'relative', height: '20px' }}>
+              <div style={{ position: 'absolute', top: '8px', left: `${GRAPH_START_PERCENT}%`, width: `${GRAPH_END_PERCENT - GRAPH_START_PERCENT}%`, height: '4px', background: '#374151', borderRadius: '2px' }}></div>
+              <div style={{ position: 'absolute', top: '8px', left: `${GRAPH_START_PERCENT + ((meZScoreFilterLow + 3) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, width: `${((meZScoreFilterHigh - meZScoreFilterLow) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, height: '4px', background: '#7c2d12', borderRadius: '2px' }}></div>
+              <div style={{ position: 'absolute', left: `${GRAPH_START_PERCENT + ((meZScoreFilterLow + 3) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, top: '3px', width: '12px', height: '12px', background: draggingHandle === 'low' ? '#fbbf24' : '#ea580c', borderRadius: '50%', transform: 'translateX(-50%)', cursor: 'grab', border: '2px solid #fbbf24', zIndex: 3 }} onMouseDown={(e) => handleSliderDrag('low', e)} />
+              <div style={{ position: 'absolute', left: `${GRAPH_START_PERCENT + ((meZScoreFilterHigh + 3) / 6) * (GRAPH_END_PERCENT - GRAPH_START_PERCENT)}%`, top: '3px', width: '12px', height: '12px', background: draggingHandle === 'high' ? '#fbbf24' : '#ea580c', borderRadius: '50%', transform: 'translateX(-50%)', cursor: 'grab', border: '2px solid #fbbf24', zIndex: 3 }} onMouseDown={(e) => handleSliderDrag('high', e)} />
             </div>
-          </>
-        ) : (<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>Select an athlete or check boxes to compare</div>)}
+            <div style={{ marginTop: '0.25rem', display: 'flex', gap: '0.75rem', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showPersonal ? 1 : 0.5 }}>
+                <input type="checkbox" checked={showPersonal} onChange={() => setShowPersonal(!showPersonal)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
+                <span style={{ color: '#fb923c' }}>▲</span><span style={{ color: '#a16207' }}>Attribute</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showAthletic ? 1 : 0.5 }}>
+                <input type="checkbox" checked={showAthletic} onChange={() => setShowAthletic(!showAthletic)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
+                <span style={{ color: '#fb923c' }}>●</span><span style={{ color: '#a16207' }}>Standard</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', opacity: showForged ? 1 : 0.5 }}>
+                <input type="checkbox" checked={showForged} onChange={() => setShowForged(!showForged)} style={{ cursor: 'pointer', accentColor: '#ea580c' }} />
+                <ForgedGlyph size="0.7rem" color="#fb923c" /><span style={{ color: '#a16207' }}>Forged</span>
+              </label>
+              <span style={{ color: '#78350f' }}>|</span>
+              <span style={{ color: '#fbbf24', fontSize: '0.65rem' }}>Selected: {selectedMetrics.length}/{MAX_FORGED_AXES}</span>
+            </div>
+          </div>
+        </div>
+        {/* Metric cards */}
+        <div style={{ flex: 1, padding: '0.75rem', overflowY: 'auto' }}>
+          {allAthletesMetrics.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              {allMetricsForCards.map((metricData, index) => {
+                const isSelected = selectedMetrics.some(sm => sm.formula === metricData.formula);
+                return (<MetricCard key={index} metricData={metricData} isSelected={isSelected} onClick={() => { const metric = metricData.athleteData[0]?.metric; if (metric) toggleMetricSelection(metric); }} onMouseEnter={() => setHoveredCardMetric(metricData.formula)} onMouseLeave={() => setHoveredCardMetric(null)} getSigmaColor={getSigmaColor} />);
+              })}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+              Select athletes using checkboxes to view metric cards
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -690,7 +811,11 @@ function MetricCard({ metricData, isSelected, onClick, onMouseEnter, onMouseLeav
     <div onClick={onClick} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} style={{ background: isSelected ? '#422006' : '#1e293b', padding: '0.5rem 0.6rem', borderRadius: '0.375rem', borderLeft: `4px solid ${typeInfo.bg}`, border: isSelected ? '2px solid #ea580c' : undefined, cursor: 'pointer' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
         <span style={{ fontSize: '0.55rem', padding: '0.1rem 0.25rem', background: typeInfo.bg, borderRadius: '0.15rem', color: typeInfo.text, fontWeight: '600', width: '55px', textAlign: 'center' }}>{typeInfo.label}</span>
-        <span style={{ color: typeInfo.text, fontStyle: typeInfo.symbol === 'f' ? 'italic' : 'normal', fontFamily: typeInfo.symbol === 'f' ? 'Georgia, serif' : 'inherit', fontWeight: 'bold', fontSize: '0.8rem' }}>{typeInfo.symbol}</span>
+        {typeInfo.symbol === 'f' ? (
+          <ForgedGlyph size="0.8rem" color={typeInfo.text} />
+        ) : (
+          <span style={{ color: typeInfo.text, fontWeight: 'bold', fontSize: '0.8rem' }}>{typeInfo.symbol}</span>
+        )}
         <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#fbbf24', flex: 1 }}>{formula}</span>
         {isSelected && <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: '600' }}>✓</span>}
       </div>

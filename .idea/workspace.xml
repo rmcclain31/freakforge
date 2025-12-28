@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="Renaming update to freakforge">
+    <list default="true" id="08205a47-d359-46e7-88ec-d42a3513f0a0" name="Changes" comment="Refresh for new AI context. Several features on Selection tab.">
+      <change afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/VideoAnalysis/VideoAnalysis.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/App.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/components/Dashboard/Dashboard.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/Dashboard/Dashboard.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/components/MetricExplorer/FreakFinder.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/MetricExplorer/FreakFinder.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/components/Settings/Settings.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/components/Settings/Settings.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/freakforge/frontend/src/context/AppContext.js" beforeDir="false" afterPath="$PROJECT_DIR$/freakforge/frontend/src/context/AppContext.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -79,7 +82,7 @@
       <option name="presentableId" value="Default" />
       <updated>1766616229934</updated>
       <workItem from="1766616230976" duration="8783000" />
-      <workItem from="1766723605532" duration="20209000" />
+      <workItem from="1766723605532" duration="24241000" />
     </task>
     <task id="LOCAL-00001" summary="First Comit">
       <option name="closed" value="true" />
@@ -121,7 +124,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766859937620</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="Refresh for new AI context. Several features on Selection tab.">
+      <option name="closed" value="true" />
+      <created>1766885772305</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1766885772305</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -132,7 +143,8 @@
     <MESSAGE value="All updated files. Numerous changes. Want to establish a new context for a vibe-code session." />
     <MESSAGE value="Update to pick up all unversioned files." />
     <MESSAGE value="Renaming update to freakforge" />
-    <option name="LAST_COMMIT_MESSAGE" value="Renaming update to freakforge" />
+    <MESSAGE value="Refresh for new AI context. Several features on Selection tab." />
+    <option name="LAST_COMMIT_MESSAGE" value="Refresh for new AI context. Several features on Selection tab." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/athletic_app$main.coverage" NAME="main Coverage Results" MODIFIED="1766715571495" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/athletic-metrics-analyzer/backend" />

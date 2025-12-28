@@ -22,7 +22,7 @@ function Settings() {
     }
   });
 
-  const [activeSection, setActiveSection] = useState('standard');
+  const [activeSection, setActiveSection] = useState('attribute');
 
   useEffect(() => {
     const saved = localStorage.getItem('freakforgeSettings');
@@ -143,9 +143,9 @@ function Settings() {
   const getTypeStyle = (type) => {
     switch(type) {
       case 'standard':
-        return { bg: '#92400e', text: '#fcd34d', cardBg: '#422006', symbol: '●', label: 'STANDARD' };
+        return { bg: '#92400e', text: '#fcd34d', cardBg: '#422006', symbol: 'â—', label: 'STANDARD' };
       case 'attribute':
-        return { bg: '#065f46', text: '#6ee7b7', cardBg: '#064e3b', symbol: '▲', label: 'ATTRIBUTE' };
+        return { bg: '#065f46', text: '#6ee7b7', cardBg: '#064e3b', symbol: 'â–²', label: 'ATTRIBUTE' };
       case 'forged':
         return { bg: '#5b21b6', text: '#c4b5fd', cardBg: '#4c1d95', symbol: 'f', label: 'FORGED' };
       default:
@@ -307,7 +307,7 @@ function Settings() {
       margin: '0 auto'
     }}>
       <h2 style={{ fontSize: '1.8rem', marginBottom: '0.5rem', color: '#fb923c' }}>
-        ⚙️ Metric Display Settings
+        âš™ï¸ Metric Display Settings
       </h2>
       <p style={{ color: '#a16207', marginBottom: '1.5rem' }}>
         Configure how sigma values are displayed on the bell curve. Metrics in the right column show favorable performance as positive sigma (+σ).
@@ -323,8 +323,8 @@ function Settings() {
         borderRadius: '0.5rem'
       }}>
         {[
-          { id: 'standard', label: 'Standard', symbol: '●', count: standardMetrics.length },
-          { id: 'attribute', label: 'Attributes', symbol: '▲', count: attributeMetrics.length },
+          { id: 'standard', label: 'Standard', symbol: 'â—', count: standardMetrics.length },
+          { id: 'attribute', label: 'Attributes', symbol: 'â–²', count: attributeMetrics.length },
           { id: 'forged', label: 'Forged', symbol: 'f', count: forgedMetrics.length }
         ].map(tab => {
           const typeStyle = getTypeStyle(tab.id);
@@ -380,8 +380,8 @@ function Settings() {
         marginBottom: '2rem'
       }}>
         <h3 style={{ fontSize: '1.2rem', marginBottom: '1rem', color: '#fb923c', textAlign: 'center' }}>
-          {activeSection === 'standard' && '● Standard Athletic Metrics'}
-          {activeSection === 'attribute' && '▲ Physical Attributes'}
+          {activeSection === 'standard' && 'â— Standard Athletic Metrics'}
+          {activeSection === 'attribute' && 'â–² Physical Attributes'}
           {activeSection === 'forged' && <><span style={{ fontStyle: 'italic', fontFamily: 'Georgia, serif' }}>f</span> Forged Ratios</>}
         </h3>
 
@@ -395,9 +395,9 @@ function Settings() {
               marginBottom: '0.75rem',
               textAlign: 'center'
             }}>
-              ← Left of Center
+              â† Left of Center
               <div style={{ fontSize: '0.7rem', fontWeight: '400', color: '#78716c' }}>
-                (Favorable as −σ)
+                (Favorable as âˆ’σ)
               </div>
             </div>
             <div style={{
@@ -459,7 +459,7 @@ function Settings() {
                 transform: 'translateY(-50%)',
                 fontSize: '1.5rem',
                 color: '#ef4444'
-              }}>◀</div>
+              }}>â—€</div>
 
               {/* Right arrow */}
               <div style={{
@@ -469,7 +469,7 @@ function Settings() {
                 transform: 'translateY(-50%)',
                 fontSize: '1.5rem',
                 color: '#22c55e'
-              }}>▶</div>
+              }}>â–¶</div>
 
               {/* Bell curve shape */}
               <div style={{
@@ -507,10 +507,10 @@ function Settings() {
               textAlign: 'center'
             }}>
               <div style={{ marginBottom: '0.3rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                <span style={{ color: '#fcd34d' }}>●</span> Standard
+                <span style={{ color: '#fcd34d' }}>â—</span> Standard
               </div>
               <div style={{ marginBottom: '0.3rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                <span style={{ color: '#6ee7b7' }}>▲</span> Attribute
+                <span style={{ color: '#6ee7b7' }}>â–²</span> Attribute
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
                 <span style={{ color: '#c4b5fd', fontStyle: 'italic', fontFamily: 'Georgia, serif', fontWeight: 'bold' }}>f</span> Forged
@@ -527,7 +527,7 @@ function Settings() {
               marginBottom: '0.75rem',
               textAlign: 'center'
             }}>
-              Right of Center →
+              Right of Center â†’
               <div style={{ fontSize: '0.7rem', fontWeight: '400', color: '#78716c' }}>
                 (Favorable as +σ)
               </div>
@@ -569,10 +569,10 @@ function Settings() {
           color: '#cbd5e1',
           borderLeft: '4px solid #ea580c'
         }}>
-          <strong style={{ color: '#fb923c' }}>💡 How it works:</strong>
+          <strong style={{ color: '#fb923c' }}>ðŸ’¡ How it works:</strong>
           <ul style={{ marginTop: '0.5rem', marginBottom: 0, paddingLeft: '1.25rem', lineHeight: '1.5' }}>
             <li><strong>Right column:</strong> Favorable performance appears as +σ (right of bell curve center)</li>
-            <li><strong>Left column:</strong> Favorable performance appears as −σ (left of bell curve center)</li>
+            <li><strong>Left column:</strong> Favorable performance appears as âˆ’σ (left of bell curve center)</li>
             <li><strong style={{ color: '#fbbf24' }}>Flipped</strong> metrics have their sign inverted</li>
             <li><strong style={{ color: '#c4b5fd' }}>Forged</strong> metrics are calculated ratios between two base metrics</li>
           </ul>
@@ -610,7 +610,7 @@ function Settings() {
               cursor: 'pointer'
             }}
           >
-            🔄 Reset to Defaults
+            ðŸ”„ Reset to Defaults
           </button>
 
           <button
@@ -634,7 +634,7 @@ function Settings() {
               cursor: 'pointer'
             }}
           >
-            💾 Export Settings
+            ðŸ’¾ Export Settings
           </button>
         </div>
       </div>

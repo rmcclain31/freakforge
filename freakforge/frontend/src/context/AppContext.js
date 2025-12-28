@@ -1,84 +1,72 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 
 const AppContext = createContext();
 
-export const useAppContext = () => {
-  const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useAppContext must be used within AppProvider');
-  }
-  return context;
-};
-
-export const AppProvider = ({ children }) => {
+export function AppProvider({ children }) {
+  // Athlete selection state
   const [selectedAthletes, setSelectedAthletes] = useState([]);
+
+  // Forged axes state
   const [forgedAxes, setForgedAxes] = useState([]);
+
+  // #8: Shared sidebar filter state across all tabs
+  const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState({
-    position: [],
-    state: [],
-    gradYearMin: null,
-    gradYearMax: null,
-    heightMin: null,
-    heightMax: null,
-    weightMin: null,
-    weightMax: null,
-    dash40Min: null,
-    dash40Max: null
+    positions: [],
+    states: [],
+    gradYears: [],
+    heightRange: { min: null, max: null },
+    weightRange: { min: null, max: null }
   });
-  const [activeFilters, setActiveFilters] = useState([]);
 
-  // Load forged axes from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('freakforgeForgedAxes');
-    if (saved) {
-      try {
-        setForgedAxes(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to load forged axes:', e);
+  // #3: ME bell curve slider state - persists across tab switches
+  const [meZScoreFilterLow, setMeZScoreFilterLow] = useState(0);
+  const [meZScoreFilterHigh, setMeZScoreFilterHigh] = useState(0);
+
+  // #1: Statistic filter state for Selection tab
+  const [statisticFilter, setStatisticFilter] = useState({
+    enabled: false,
+    low: -3,
+    high: 1.5,
+    keepOutside: true // true = keep outside (remove players with no z-scores >= cutoff), false = keep inside
+  });
+
+  // #4: Recalculate statistics based on filtered population
+  const [recalcStatsFromFilters, setRecalcStatsFromFilters] = useState(false);
+
+  // #6: Filter pane collapsed state
+  const [filterPaneCollapsed, setFilterPaneCollapsed] = useState(false);
+
+  // #4: Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: '',
+    message: '',
+    details: [],
+    onConfirm: null,
+    onCancel: null
+  });
+
+  const showConfirmDialog = (title, message, details, onConfirm, onCancel) => {
+    setConfirmDialog({
+      open: true,
+      title,
+      message,
+      details,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmDialog(prev => ({ ...prev, open: false }));
+      },
+      onCancel: () => {
+        if (onCancel) onCancel();
+        setConfirmDialog(prev => ({ ...prev, open: false }));
       }
-    }
-  }, []);
+    });
+  };
 
-  // Save forged axes to localStorage when changed
-  useEffect(() => {
-    if (forgedAxes.length > 0) {
-      localStorage.setItem('freakforgeForgedAxes', JSON.stringify(forgedAxes));
-    }
-  }, [forgedAxes]);
-
-  // Update active filters list whenever filters change
-  useEffect(() => {
-    const active = [];
-
-    if (filters.position.length > 0) {
-      active.push(`Position: ${filters.position.join(', ')}`);
-    }
-    if (filters.state.length > 0) {
-      active.push(`State: ${filters.state.join(', ')}`);
-    }
-    if (filters.gradYearMin || filters.gradYearMax) {
-      const min = filters.gradYearMin || '—';
-      const max = filters.gradYearMax || '—';
-      active.push(`Class: ${min} to ${max}`);
-    }
-    if (filters.heightMin || filters.heightMax) {
-      const min = filters.heightMin ? `${Math.floor(filters.heightMin/12)}'${filters.heightMin%12}"` : '—';
-      const max = filters.heightMax ? `${Math.floor(filters.heightMax/12)}'${filters.heightMax%12}"` : '—';
-      active.push(`Height: ${min} to ${max}`);
-    }
-    if (filters.weightMin || filters.weightMax) {
-      const min = filters.weightMin || '—';
-      const max = filters.weightMax || '—';
-      active.push(`Weight: ${min} to ${max} lbs`);
-    }
-    if (filters.dash40Min || filters.dash40Max) {
-      const min = filters.dash40Min || '—';
-      const max = filters.dash40Max || '—';
-      active.push(`40-Time: ${min} to ${max} sec`);
-    }
-
-    setActiveFilters(active);
-  }, [filters]);
+  const closeConfirmDialog = () => {
+    setConfirmDialog(prev => ({ ...prev, open: false }));
+  };
 
   const toggleAthleteSelection = (athleteId) => {
     setSelectedAthletes(prev =>
@@ -88,92 +76,19 @@ export const AppProvider = ({ children }) => {
     );
   };
 
+  const removeAthleteSelection = (athleteId) => {
+    setSelectedAthletes(prev => prev.filter(id => id !== athleteId));
+  };
+
   const clearSelectedAthletes = () => {
     setSelectedAthletes([]);
   };
 
-  const updateFilters = (newFilters) => {
-    setFilters(prev => ({ ...prev, ...newFilters }));
-  };
-
-  const clearFilters = () => {
-    setFilters({
-      position: [],
-      state: [],
-      gradYearMin: null,
-      gradYearMax: null,
-      heightMin: null,
-      heightMax: null,
-      weightMin: null,
-      weightMax: null,
-      dash40Min: null,
-      dash40Max: null
-    });
-  };
-
-  const applyFilters = (athletes) => {
-    return athletes.filter(athlete => {
-      // Position filter
-      if (filters.position.length > 0 && !filters.position.includes(athlete.position)) {
-        return false;
-      }
-
-      // State filter
-      if (filters.state.length > 0 && !filters.state.includes(athlete.state)) {
-        return false;
-      }
-
-      // Graduation year filter
-      if (filters.gradYearMin && athlete.gradYear < filters.gradYearMin) {
-        return false;
-      }
-      if (filters.gradYearMax && athlete.gradYear > filters.gradYearMax) {
-        return false;
-      }
-
-      // Height filter
-      if (filters.heightMin && athlete.height < filters.heightMin) {
-        return false;
-      }
-      if (filters.heightMax && athlete.height > filters.heightMax) {
-        return false;
-      }
-
-      // Weight filter
-      if (filters.weightMin && athlete.weight < filters.weightMin) {
-        return false;
-      }
-      if (filters.weightMax && athlete.weight > filters.weightMax) {
-        return false;
-      }
-
-      // 40-yard dash filter
-      if (filters.dash40Min && athlete.dash40 < filters.dash40Min) {
-        return false;
-      }
-      if (filters.dash40Max && athlete.dash40 > filters.dash40Max) {
-        return false;
-      }
-
-      return true;
-    });
-  };
-
-  // Forged Profile management
   const addForgedAxis = (formula, label) => {
-    if (forgedAxes.length >= 8) {
-      alert('Maximum 8 custom axes reached');
-      return false;
-    }
-
-    // Check if already exists
-    if (forgedAxes.some(axis => axis.formula === formula)) {
-      alert('This metric is already in your Forged Profile');
-      return false;
-    }
-
-    setForgedAxes(prev => [...prev, { formula, label: label || formula }]);
-    return true;
+    setForgedAxes(prev => {
+      if (prev.some(axis => axis.formula === formula)) return prev;
+      return [...prev, { formula, label }];
+    });
   };
 
   const removeForgedAxis = (formula) => {
@@ -181,26 +96,98 @@ export const AppProvider = ({ children }) => {
   };
 
   const clearForgedAxes = () => {
-    if (confirm('Clear all custom axes from Forged Profile?')) {
-      setForgedAxes([]);
-      localStorage.removeItem('freakforgeForgedAxes');
-    }
+    setForgedAxes([]);
+  };
+
+  // #8: Filter helper functions
+  const toggleFilter = (filterType, value) => {
+    setFilters(prev => {
+      const current = prev[filterType];
+      const updated = current.includes(value)
+        ? current.filter(v => v !== value)
+        : [...current, value];
+      return { ...prev, [filterType]: updated };
+    });
+  };
+
+  const clearAllFilters = () => {
+    setFilters({
+      positions: [],
+      states: [],
+      gradYears: [],
+      heightRange: { min: null, max: null },
+      weightRange: { min: null, max: null }
+    });
+    setStatisticFilter({
+      enabled: false,
+      low: -3,
+      high: 1.5,
+      keepOutside: true
+    });
+  };
+
+  const hasActiveFilters = () => {
+    return filters.positions.length > 0 ||
+      filters.states.length > 0 ||
+      filters.gradYears.length > 0 ||
+      filters.heightRange.min !== null ||
+      filters.heightRange.max !== null ||
+      filters.weightRange.min !== null ||
+      filters.weightRange.max !== null ||
+      statisticFilter.enabled;
   };
 
   const value = {
     selectedAthletes,
+    setSelectedAthletes,
     toggleAthleteSelection,
+    removeAthleteSelection,
     clearSelectedAthletes,
-    filters,
-    updateFilters,
-    clearFilters,
-    applyFilters,
-    activeFilters,
     forgedAxes,
     addForgedAxis,
     removeForgedAxis,
-    clearForgedAxes
+    clearForgedAxes,
+    // #8: Shared filter state
+    searchQuery,
+    setSearchQuery,
+    filters,
+    setFilters,
+    toggleFilter,
+    clearAllFilters,
+    hasActiveFilters,
+    // #3: ME slider state
+    meZScoreFilterLow,
+    setMeZScoreFilterLow,
+    meZScoreFilterHigh,
+    setMeZScoreFilterHigh,
+    // #1: Statistic filter
+    statisticFilter,
+    setStatisticFilter,
+    // #4: Recalc stats from filters
+    recalcStatsFromFilters,
+    setRecalcStatsFromFilters,
+    // #6: Filter pane collapsed
+    filterPaneCollapsed,
+    setFilterPaneCollapsed,
+    // #4: Confirmation dialog
+    confirmDialog,
+    showConfirmDialog,
+    closeConfirmDialog
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
-};
+  return (
+    <AppContext.Provider value={value}>
+      {children}
+    </AppContext.Provider>
+  );
+}
+
+export function useAppContext() {
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error('useAppContext must be used within an AppProvider');
+  }
+  return context;
+}
+
+export default AppContext;
