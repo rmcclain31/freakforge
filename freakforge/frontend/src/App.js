@@ -81,7 +81,7 @@ function App() {
 
       <main style={{
         flex: 1,
-        overflow: 'hidden'
+        overflow: 'auto'
       }}>
         {/* Selection tab - athlete list only, no charts */}
         {activeTab === 'selection' && <Dashboard mode="selection" />}

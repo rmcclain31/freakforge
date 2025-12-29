@@ -33,9 +33,9 @@ const ATHLETE_COLORS = [
 // Keypoint colors for visualization
 const KEYPOINT_COLORS = {
   head: '#fbbf24',      // Yellow - ears
-  shoulder: '#3b82f6',  // Blue
-  elbow: '#8b5cf6',     // Purple
-  hip: '#22c55e',       // Green
+  shoulder: '#ea580c',  // Blue
+  elbow: '#ea580c',     // Purple
+  hip: '#10b981',       // Green
   knee: '#f97316',      // Orange
   ankle: '#ef4444',     // Red
   centerOfMass: '#ffffff' // White
@@ -190,8 +190,12 @@ function VideoAnalysis() {
 
   // Trim state
   const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
-  const [isDraggingTrim, setIsDraggingTrim] = useState(null);
+  const [trimEnd, setTrimEnd] = useState(1); // 0-1 percentage
+  const [isDraggingTrim, setIsDraggingTrim] = useState(null); // 'start' | 'end' | null
+  const [isTrimApplied, setIsTrimApplied] = useState(false);
+  const [effectiveDuration, setEffectiveDuration] = useState(0);
+  const [effectiveStartTime, setEffectiveStartTime] = useState(0);
+  const trimContainerRef = useRef(null);
 
   // Save preferences
   const [saveMode, setSaveMode] = useState('individual');
@@ -207,6 +211,9 @@ function VideoAnalysis() {
   const videoResizeStartY = useRef(0);
   const videoResizeStartHeight = useRef(0);
 
+  // Video render dimensions (for canvas alignment)
+  const [videoRenderDims, setVideoRenderDims] = useState({ width: 0, height: 0, offsetX: 0, offsetY: 0 });
+
   // Calibration state
   const [selectedDrill, setSelectedDrill] = useState('custom');
   const [calibrationMode, setCalibrationMode] = useState('line');
@@ -216,6 +223,7 @@ function VideoAnalysis() {
   const [calibrationDistance, setCalibrationDistance] = useState('');
   const [isCalibrated, setIsCalibrated] = useState(false);
   const [pixelsPerYard, setPixelsPerYard] = useState(null);
+  const [isSettingCalibration, setIsSettingCalibration] = useState(false); // true when user is placing points
 
   // AI Pose Detection state
   const [poseDetectorReady, setPoseDetectorReady] = useState(false);
@@ -291,6 +299,7 @@ function VideoAnalysis() {
   const fileInputRef = useRef(null);
   const trimSliderRef = useRef(null);
   const cancelProcessingRef = useRef(false);
+  const isSteppingRef = useRef(false); // Track if we're manually stepping frames
 
   // Context
   const {
@@ -558,44 +567,218 @@ function VideoAnalysis() {
     setManualCOMPoints([]);
   };
 
+  // Calculate video render dimensions within container
+  const updateVideoRenderDims = useCallback(() => {
+    if (!containerRef.current || !videoRef.current) return;
+
+    const container = containerRef.current;
+    const video = videoRef.current;
+    const containerRect = container.getBoundingClientRect();
+
+    const videoWidth = video.videoWidth || 640;
+    const videoHeight = video.videoHeight || 360;
+
+    const containerAspect = containerRect.width / containerRect.height;
+    const videoAspect = videoWidth / videoHeight;
+
+    let renderWidth, renderHeight, offsetX, offsetY;
+
+    if (containerAspect > videoAspect) {
+      // Container is wider - video has horizontal letterboxing
+      renderHeight = containerRect.height;
+      renderWidth = containerRect.height * videoAspect;
+      offsetX = (containerRect.width - renderWidth) / 2;
+      offsetY = 0;
+    } else {
+      // Container is taller - video has vertical letterboxing
+      renderWidth = containerRect.width;
+      renderHeight = containerRect.width / videoAspect;
+      offsetX = 0;
+      offsetY = (containerRect.height - renderHeight) / 2;
+    }
+
+    setVideoRenderDims({ width: renderWidth, height: renderHeight, offsetX, offsetY });
+  }, []);
+
+  // Trim slider handlers
+  const handleTrimDragStart = (handle, e) => {
+    e.preventDefault();
+    setIsDraggingTrim(handle);
+  };
+
+  const handleTrimDragMove = useCallback((e) => {
+    if (!isDraggingTrim || !trimContainerRef.current || !videoRef.current) return;
+
+    const rect = trimContainerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+
+    if (isDraggingTrim === 'start') {
+      const newStart = Math.min(x, trimEnd - 0.01);
+      setTrimStart(newStart);
+      // Scrub video to match
+      videoRef.current.currentTime = newStart * duration;
+      setCurrentTime(newStart * duration);
+      setCurrentFrame(Math.floor(newStart * duration * fps));
+    } else if (isDraggingTrim === 'end') {
+      const newEnd = Math.max(x, trimStart + 0.01);
+      setTrimEnd(newEnd);
+      // Scrub video to match
+      videoRef.current.currentTime = newEnd * duration;
+      setCurrentTime(newEnd * duration);
+      setCurrentFrame(Math.floor(newEnd * duration * fps));
+    }
+  }, [isDraggingTrim, trimStart, trimEnd, duration, fps]);
+
+  const handleTrimDragEnd = useCallback(() => {
+    setIsDraggingTrim(null);
+  }, []);
+
+  // Global handlers for trim dragging
+  useEffect(() => {
+    if (isDraggingTrim) {
+      window.addEventListener('mousemove', handleTrimDragMove);
+      window.addEventListener('mouseup', handleTrimDragEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleTrimDragMove);
+        window.removeEventListener('mouseup', handleTrimDragEnd);
+      };
+    }
+  }, [isDraggingTrim, handleTrimDragMove, handleTrimDragEnd]);
+
+  // Reset trim when video changes
+  useEffect(() => {
+    setTrimStart(0);
+    setTrimEnd(1);
+  }, [videoSource]);
+
   // ============ VIDEO PLAYBACK ============
 
   const handleVideoLoad = () => {
     if (videoRef.current) {
-      setDuration(videoRef.current.duration);
-      setTotalFrames(Math.floor(videoRef.current.duration * fps));
+      const dur = videoRef.current.duration;
+      setDuration(dur);
+      setTotalFrames(Math.floor(dur * fps));
+      setEffectiveDuration(dur);
+      setEffectiveStartTime(0);
+      setIsTrimApplied(false);
+      setTrimStart(0);
+      setTrimEnd(1);
 
       // Initialize canvas dimensions
       if (canvasRef.current) {
         canvasRef.current.width = videoRef.current.videoWidth || 640;
         canvasRef.current.height = videoRef.current.videoHeight || 360;
       }
+
+      // Calculate video render dimensions after a brief delay to ensure layout is complete
+      setTimeout(updateVideoRenderDims, 50);
     }
   };
 
+  // Apply trim to video
+  const applyTrim = () => {
+    if (!videoRef.current) return;
+
+    const startTime = trimStart * duration;
+    const endTime = trimEnd * duration;
+    const trimmedDuration = endTime - startTime;
+
+    setEffectiveStartTime(startTime);
+    setEffectiveDuration(trimmedDuration);
+    setTotalFrames(Math.floor(trimmedDuration * fps));
+    setIsTrimApplied(true);
+
+    // Reset trim sliders for potential future re-trim
+    setTrimStart(0);
+    setTrimEnd(1);
+
+    // Seek to start of trimmed region, set relative time to 0
+    videoRef.current.currentTime = startTime;
+    setCurrentTime(0);
+    setCurrentFrame(0);
+  };
+
+  // Reset trim
+  const resetTrim = () => {
+    if (!videoRef.current) return;
+
+    setTrimStart(0);
+    setTrimEnd(1);
+    setEffectiveStartTime(0);
+    setEffectiveDuration(duration);
+    setTotalFrames(Math.floor(duration * fps));
+    setIsTrimApplied(false);
+
+    videoRef.current.currentTime = 0;
+    setCurrentTime(0);
+    setCurrentFrame(0);
+  };
+
   const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
-      setCurrentFrame(Math.floor(videoRef.current.currentTime * fps));
+    if (videoRef.current && !isSteppingRef.current) {
+      const actualTime = videoRef.current.currentTime;
+
+      // If trim is applied, calculate relative time
+      if (isTrimApplied) {
+        const relativeTime = actualTime - effectiveStartTime;
+        setCurrentTime(relativeTime);
+        setCurrentFrame(Math.floor(relativeTime * fps));
+
+        // Stop at end of trimmed region
+        const endTime = effectiveStartTime + effectiveDuration;
+        if (actualTime >= endTime) {
+          videoRef.current.pause();
+          videoRef.current.currentTime = endTime;
+          setIsPlaying(false);
+        }
+      } else {
+        setCurrentTime(actualTime);
+        setCurrentFrame(Math.floor(actualTime * fps));
+      }
     }
   };
 
   const seekToFrame = (frame) => {
     if (videoRef.current) {
-      const time = frame / fps;
-      videoRef.current.currentTime = time;
+      isSteppingRef.current = true;
+      videoRef.current.pause();
+
+      // Calculate actual time based on trim
+      const relativeTime = frame / fps;
+      const actualTime = isTrimApplied ? effectiveStartTime + relativeTime : relativeTime;
+
+      videoRef.current.currentTime = actualTime;
       setCurrentFrame(frame);
+      setCurrentTime(relativeTime);
+      setIsPlaying(false);
+      // Reset stepping flag after seek completes
+      setTimeout(() => { isSteppingRef.current = false; }, 100);
     }
   };
 
   const stepFrame = (delta) => {
-    setCurrentFrame(prevFrame => {
-      const newFrame = Math.max(0, Math.min(totalFrames - 1, prevFrame + delta));
-      if (videoRef.current) {
-        videoRef.current.currentTime = newFrame / fps;
-      }
-      return newFrame;
-    });
+    if (!videoRef.current) return;
+
+    // Pause video for frame stepping
+    videoRef.current.pause();
+    setIsPlaying(false);
+    isSteppingRef.current = true;
+
+    // Calculate new frame (clamped to trim range)
+    const maxFrame = totalFrames - 1;
+    const newFrame = Math.max(0, Math.min(maxFrame, currentFrame + delta));
+    const relativeTime = newFrame / fps;
+
+    // Calculate actual video time
+    const actualTime = isTrimApplied ? effectiveStartTime + relativeTime : relativeTime;
+
+    // Update video and state
+    videoRef.current.currentTime = actualTime;
+    setCurrentFrame(newFrame);
+    setCurrentTime(relativeTime);
+
+    // Reset stepping flag after seek completes
+    setTimeout(() => { isSteppingRef.current = false; }, 100);
   };
 
   const togglePlay = () => {
@@ -603,6 +786,13 @@ function VideoAnalysis() {
       if (isPlaying) {
         videoRef.current.pause();
       } else {
+        // If at end of trim, seek to start before playing
+        if (isTrimApplied) {
+          const endTime = effectiveStartTime + effectiveDuration;
+          if (videoRef.current.currentTime >= endTime - 0.1) {
+            videoRef.current.currentTime = effectiveStartTime;
+          }
+        }
         videoRef.current.play();
       }
       setIsPlaying(!isPlaying);
@@ -626,7 +816,20 @@ function VideoAnalysis() {
 
   const handleVideoResizeEnd = useCallback(() => {
     setIsResizingVideo(false);
-  }, []);
+    // Recalculate video render dimensions after resize
+    setTimeout(updateVideoRenderDims, 50);
+  }, [updateVideoRenderDims]);
+
+  // Update video render dims when container size or video changes
+  useEffect(() => {
+    updateVideoRenderDims();
+  }, [videoContainerHeight, videoSource, updateVideoRenderDims]);
+
+  // Also update on window resize
+  useEffect(() => {
+    window.addEventListener('resize', updateVideoRenderDims);
+    return () => window.removeEventListener('resize', updateVideoRenderDims);
+  }, [updateVideoRenderDims]);
 
   // Global mouse handlers for video resize
   useEffect(() => {
@@ -645,7 +848,7 @@ function VideoAnalysis() {
     if (athleteSelectionMode) return 'crosshair';
     if (manualTrackingMode) return 'crosshair';
     if (selectedKeypoint !== null) return 'crosshair';
-    if (!isCalibrated && calibrationMarkers.length < 2) return 'crosshair';
+    if (isSettingCalibration && !isCalibrated) return 'crosshair';
     return 'default';
   };
 
@@ -657,6 +860,7 @@ function VideoAnalysis() {
     setCalibrationMode(drill.calibrationType);
     setCalibrationMarkers([]);
     setIsCalibrated(false);
+    setIsSettingCalibration(false);
 
     if (drill.distance) {
       setCalibrationDistance(drill.distance.toString());
@@ -668,45 +872,47 @@ function VideoAnalysis() {
   const handleCanvasClick = (e) => {
     if (!containerRef.current || !videoRef.current) return;
 
-    const rect = containerRef.current.getBoundingClientRect();
+    const containerRect = containerRef.current.getBoundingClientRect();
     const video = videoRef.current;
 
     // Get actual video dimensions
     const videoWidth = video.videoWidth || 640;
     const videoHeight = video.videoHeight || 360;
 
-    // Calculate where the video is rendered within the container (accounting for object-fit: contain)
-    const containerAspect = rect.width / rect.height;
-    const videoAspect = videoWidth / videoHeight;
+    // Use stored render dims or calculate on the fly
+    let { offsetX, offsetY, width: renderWidth, height: renderHeight } = videoRenderDims;
 
-    let renderWidth, renderHeight, offsetX, offsetY;
+    if (!renderWidth || !renderHeight) {
+      // Calculate render dimensions
+      const containerAspect = containerRect.width / containerRect.height;
+      const videoAspect = videoWidth / videoHeight;
 
-    if (containerAspect > videoAspect) {
-      // Container is wider - video will have horizontal letterboxing
-      renderHeight = rect.height;
-      renderWidth = rect.height * videoAspect;
-      offsetX = (rect.width - renderWidth) / 2;
-      offsetY = 0;
-    } else {
-      // Container is taller - video will have vertical letterboxing
-      renderWidth = rect.width;
-      renderHeight = rect.width / videoAspect;
-      offsetX = 0;
-      offsetY = (rect.height - renderHeight) / 2;
+      if (containerAspect > videoAspect) {
+        renderHeight = containerRect.height;
+        renderWidth = containerRect.height * videoAspect;
+        offsetX = (containerRect.width - renderWidth) / 2;
+        offsetY = 0;
+      } else {
+        renderWidth = containerRect.width;
+        renderHeight = containerRect.width / videoAspect;
+        offsetX = 0;
+        offsetY = (containerRect.height - renderHeight) / 2;
+      }
     }
 
-    // Calculate click position relative to the actual video render area
-    const clickX = e.clientX - rect.left - offsetX;
-    const clickY = e.clientY - rect.top - offsetY;
+    // Get click position relative to container
+    const clickX = e.clientX - containerRect.left;
+    const clickY = e.clientY - containerRect.top;
 
-    // Check if click is within the video area
-    if (clickX < 0 || clickX > renderWidth || clickY < 0 || clickY > renderHeight) {
+    // Check if click is within the video render area
+    if (clickX < offsetX || clickX > offsetX + renderWidth ||
+        clickY < offsetY || clickY > offsetY + renderHeight) {
       return; // Click was in letterbox area
     }
 
-    // Scale to video pixel coordinates
-    const x = (clickX / renderWidth) * videoWidth;
-    const y = (clickY / renderHeight) * videoHeight;
+    // Convert to video pixel coordinates
+    const x = ((clickX - offsetX) / renderWidth) * videoWidth;
+    const y = ((clickY - offsetY) / renderHeight) * videoHeight;
 
     // Handle athlete selection mode (for crowded scenes)
     if (athleteSelectionMode) {
@@ -754,18 +960,20 @@ function VideoAnalysis() {
       return;
     }
 
-    // Handle calibration marker placement
-    const maxMarkers = {
-      'line': 2,
-      'cones-3': 3,
-      'l-drill': 3,
-      'grid': 4
-    }[calibrationMode] || 2;
+    // Handle calibration marker placement - only when in setting mode
+    if (isSettingCalibration && !isCalibrated) {
+      const maxMarkers = {
+        'line': 2,
+        'cones-3': 3,
+        'l-drill': 3,
+        'grid': 4
+      }[calibrationMode] || 2;
 
-    if (calibrationMarkers.length < maxMarkers) {
-      const drill = DRILL_TEMPLATES[selectedDrill];
-      const label = drill.markers?.[calibrationMarkers.length] || `Point ${calibrationMarkers.length + 1}`;
-      setCalibrationMarkers([...calibrationMarkers, { x, y, label }]);
+      if (calibrationMarkers.length < maxMarkers) {
+        const drill = DRILL_TEMPLATES[selectedDrill];
+        const label = drill.markers?.[calibrationMarkers.length] || `Point ${calibrationMarkers.length + 1}`;
+        setCalibrationMarkers([...calibrationMarkers, { x, y, label }]);
+      }
     }
   };
 
@@ -778,36 +986,37 @@ function VideoAnalysis() {
   const handleCanvasMouseMove = (e) => {
     if (!isDragging || activeMarkerIndex === null || !containerRef.current || !videoRef.current) return;
 
-    const rect = containerRef.current.getBoundingClientRect();
+    const containerRect = containerRef.current.getBoundingClientRect();
     const video = videoRef.current;
 
-    // Get actual video dimensions
     const videoWidth = video.videoWidth || 640;
     const videoHeight = video.videoHeight || 360;
 
-    // Calculate where the video is rendered within the container
-    const containerAspect = rect.width / rect.height;
-    const videoAspect = videoWidth / videoHeight;
+    // Use stored render dims or calculate on the fly
+    let { offsetX, offsetY, width: renderWidth, height: renderHeight } = videoRenderDims;
 
-    let renderWidth, renderHeight, offsetX, offsetY;
+    if (!renderWidth || !renderHeight) {
+      const containerAspect = containerRect.width / containerRect.height;
+      const videoAspect = videoWidth / videoHeight;
 
-    if (containerAspect > videoAspect) {
-      renderHeight = rect.height;
-      renderWidth = rect.height * videoAspect;
-      offsetX = (rect.width - renderWidth) / 2;
-      offsetY = 0;
-    } else {
-      renderWidth = rect.width;
-      renderHeight = rect.width / videoAspect;
-      offsetX = 0;
-      offsetY = (rect.height - renderHeight) / 2;
+      if (containerAspect > videoAspect) {
+        renderHeight = containerRect.height;
+        renderWidth = containerRect.height * videoAspect;
+        offsetX = (containerRect.width - renderWidth) / 2;
+        offsetY = 0;
+      } else {
+        renderWidth = containerRect.width;
+        renderHeight = containerRect.width / videoAspect;
+        offsetX = 0;
+        offsetY = (containerRect.height - renderHeight) / 2;
+      }
     }
 
-    const clickX = e.clientX - rect.left - offsetX;
-    const clickY = e.clientY - rect.top - offsetY;
+    const clickX = e.clientX - containerRect.left;
+    const clickY = e.clientY - containerRect.top;
 
-    const x = (clickX / renderWidth) * videoWidth;
-    const y = (clickY / renderHeight) * videoHeight;
+    const x = ((clickX - offsetX) / renderWidth) * videoWidth;
+    const y = ((clickY - offsetY) / renderHeight) * videoHeight;
 
     setCalibrationMarkers(prev => {
       const updated = [...prev];
@@ -854,6 +1063,11 @@ function VideoAnalysis() {
     setShowQualityWarning(false);
 
     try {
+      // Calculate actual time range for processing
+      // If trim is applied, use effective values; otherwise use trim slider values
+      const startTime = isTrimApplied ? effectiveStartTime : (trimStart * duration);
+      const endTime = isTrimApplied ? (effectiveStartTime + effectiveDuration) : (trimEnd * duration);
+
       // Process video with AI pose detection
       const frameData = await processVideoWithAI(
         videoRef.current,
@@ -863,7 +1077,9 @@ function VideoAnalysis() {
           enableBiomechanics,
           movementDirection,
           confidenceThreshold,
-          athleteRegion: selectedAthleteBox // Pass athlete selection if set
+          athleteRegion: selectedAthleteBox,
+          startTime,
+          endTime
         },
         (progress) => setProcessingProgress(progress),
         () => cancelProcessingRef.current
@@ -1059,7 +1275,7 @@ function VideoAnalysis() {
       ctx.fillStyle = 'rgba(139, 92, 246, 0.1)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.font = 'bold 14px sans-serif';
-      ctx.fillStyle = '#a78bfa';
+      ctx.fillStyle = '#fb923c';
       ctx.fillText('Manual Mode: Click to place center-of-mass', 10, 25);
     }
 
@@ -1088,7 +1304,7 @@ function VideoAnalysis() {
     // Draw manual COM points
     if (manualCOMPoints.length > 0) {
       // Draw path between points
-      ctx.strokeStyle = '#a78bfa';
+      ctx.strokeStyle = '#fb923c';
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -1105,7 +1321,7 @@ function VideoAnalysis() {
 
         ctx.beginPath();
         ctx.arc(point.x, point.y, isCurrentFrame ? 10 : 6, 0, Math.PI * 2);
-        ctx.fillStyle = isCurrentFrame ? '#fbbf24' : '#a78bfa';
+        ctx.fillStyle = isCurrentFrame ? '#fbbf24' : '#fb923c';
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2;
@@ -1130,7 +1346,7 @@ function VideoAnalysis() {
 
     // Draw calibration markers
     if (calibrationMarkers.length > 0) {
-      ctx.strokeStyle = '#22c55e';
+      ctx.strokeStyle = '#10b981';
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
 
@@ -1149,17 +1365,21 @@ function VideoAnalysis() {
       // Draw marker points with labels
       calibrationMarkers.forEach((marker, i) => {
         ctx.beginPath();
-        ctx.arc(marker.x, marker.y, 8, 0, Math.PI * 2);
-        ctx.fillStyle = '#22c55e';
+        ctx.arc(marker.x, marker.y, 12, 0, Math.PI * 2);
+        ctx.fillStyle = '#10b981';
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.stroke();
 
-        // Label
-        ctx.font = '12px sans-serif';
+        // Label - use larger font that scales with video
+        const fontSize = Math.max(24, Math.min(canvas.width, canvas.height) / 20);
+        ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(marker.label, marker.x + 12, marker.y - 8);
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 3;
+        ctx.strokeText(marker.label, marker.x + 18, marker.y - 12);
+        ctx.fillText(marker.label, marker.x + 18, marker.y - 12);
       });
     }
 
@@ -1191,7 +1411,7 @@ function VideoAnalysis() {
         if (!kp || kp.score < confidenceThreshold) return;
 
         const keypointIdx = parseInt(idx);
-        let color = '#3b82f6';
+        let color = '#ea580c';
 
         // Color code by body part
         if ([MOVENET_KEYPOINTS.LEFT_EAR, MOVENET_KEYPOINTS.RIGHT_EAR].includes(keypointIdx)) {
@@ -1270,7 +1490,7 @@ function VideoAnalysis() {
         let yOffset = 40;
 
         ctx.font = '11px sans-serif';
-        ctx.fillStyle = '#a78bfa';
+        ctx.fillStyle = '#fb923c';
 
         if (bio.spineAngle !== null) {
           ctx.fillText(`Spine: ${bio.spineAngle.toFixed(1)}°`, 10, yOffset);
@@ -1297,6 +1517,13 @@ function VideoAnalysis() {
     drawOverlay();
   }, [calibrationMarkers]);
 
+  // Redraw when video render dimensions change
+  useEffect(() => {
+    if (videoRenderDims.width && videoRenderDims.height) {
+      drawOverlay();
+    }
+  }, [videoRenderDims]);
+
   // ============ CHARTS ============
 
   useEffect(() => {
@@ -1314,7 +1541,7 @@ function VideoAnalysis() {
         datasets: [{
           label: 'Speed (MPH)',
           data: analysisResults.frames.filter((_, i) => i % 2 === 0).map(f => f.velocityMph),
-          borderColor: '#3b82f6',
+          borderColor: '#ea580c',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           fill: true,
           tension: 0.4,
@@ -1329,14 +1556,14 @@ function VideoAnalysis() {
         },
         scales: {
           x: {
-            title: { display: true, text: 'Time (s)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Time (s)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Speed (MPH)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            title: { display: true, text: 'Speed (MPH)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' },
             beginAtZero: true
           }
         }
@@ -1359,7 +1586,7 @@ function VideoAnalysis() {
         datasets: [{
           label: 'Acceleration (g)',
           data: analysisResults.frames.filter((_, i) => i % 2 === 0).map(f => f.accelerationG),
-          borderColor: '#f59e0b',
+          borderColor: '#fbbf24',
           backgroundColor: 'rgba(245, 158, 11, 0.1)',
           fill: true,
           tension: 0.4,
@@ -1374,14 +1601,14 @@ function VideoAnalysis() {
         },
         scales: {
           x: {
-            title: { display: true, text: 'Time (s)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Time (s)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Acceleration (g)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Acceleration (g)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           }
         }
       }
@@ -1418,14 +1645,14 @@ function VideoAnalysis() {
         },
         scales: {
           x: {
-            title: { display: true, text: 'Time (s)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Time (s)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Power (Watts)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            title: { display: true, text: 'Power (Watts)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' },
             beginAtZero: true
           }
         }
@@ -1449,7 +1676,7 @@ function VideoAnalysis() {
         datasets: [{
           label: 'Spine Angle (°)',
           data: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.spineAngle),
-          borderColor: '#a78bfa',
+          borderColor: '#fb923c',
           backgroundColor: 'rgba(167, 139, 250, 0.1)',
           fill: true,
           tension: 0.4,
@@ -1461,18 +1688,18 @@ function VideoAnalysis() {
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
-          title: { display: true, text: 'Spine Angle (from vertical)', color: '#a78bfa' }
+          title: { display: true, text: 'Spine Angle (from vertical)', color: '#fb923c' }
         },
         scales: {
           x: {
-            title: { display: true, text: 'Time (s)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Time (s)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Angle (°)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Angle (°)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           }
         }
       }
@@ -1504,7 +1731,7 @@ function VideoAnalysis() {
           {
             label: 'Foot Angle (°)',
             data: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.footAngle),
-            borderColor: '#22c55e',
+            borderColor: '#10b981',
             backgroundColor: 'rgba(34, 197, 94, 0.1)',
             fill: false,
             tension: 0.4,
@@ -1516,19 +1743,19 @@ function VideoAnalysis() {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: true, labels: { color: '#9ca3af' } },
+          legend: { display: true, labels: { color: '#a16207' } },
           title: { display: true, text: 'Lead Leg Angles', color: '#f97316' }
         },
         scales: {
           x: {
-            title: { display: true, text: 'Time (s)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Time (s)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Angle (°)', color: '#9ca3af' },
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' }
+            title: { display: true, text: 'Angle (°)', color: '#a16207' },
+            ticks: { color: '#a16207' },
+            grid: { color: '#78350f' }
           }
         }
       }
@@ -1563,45 +1790,22 @@ function VideoAnalysis() {
   // ============ RENDER ============
 
   return (
-    <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto', maxHeight: '100vh', overflowY: 'auto' }}>
+    <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#fbbf24', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <div style={{ marginBottom: '1rem' }}>
+        <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#fbbf24', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <ForgedGlyph size="1.75rem" color="#fbbf24" /> Video Analysis
         </h1>
-        <p style={{ color: '#9ca3af' }}>
-          AI-powered motion tracking for athletic performance analysis
-        </p>
-
-        {/* AI Status indicator */}
-        <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {poseDetectorLoading ? (
-            <>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b', animation: 'pulse 1s infinite' }} />
-              <span style={{ fontSize: '0.8rem', color: '#f59e0b' }}>Loading AI pose detector...</span>
-            </>
-          ) : poseDetectorReady ? (
-            <>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
-              <span style={{ fontSize: '0.8rem', color: '#22c55e' }}>AI Ready (MoveNet)</span>
-            </>
-          ) : (
-            <>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} />
-              <span style={{ fontSize: '0.8rem', color: '#ef4444' }}>AI Error: {poseDetectorError}</span>
-            </>
-          )}
-        </div>
       </div>
 
       {/* Video Source Controls */}
-      <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', marginBottom: '1rem', borderLeft: '4px solid #78350f' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             onClick={() => fileInputRef.current?.click()}
-            style={{ padding: '0.5rem 1rem', background: '#3b82f6', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '500' }}
+            style={{ padding: '0.4rem 0.75rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.85rem' }}
           >
-            📁 Upload Video
+            Upload Video
           </button>
           <input
             ref={fileInputRef}
@@ -1613,30 +1817,43 @@ function VideoAnalysis() {
 
           <button
             onClick={startRecordingMode}
-            style={{ padding: '0.5rem 1rem', background: '#ef4444', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '500' }}
+            style={{ padding: '0.4rem 0.75rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.85rem' }}
           >
-            🎥 Record
+            Record
           </button>
 
-          <div style={{ display: 'flex', gap: '0.5rem', flex: 1, minWidth: '200px' }}>
-            <input
-              type="text"
-              value={videoUrl}
-              onChange={(e) => setVideoUrl(e.target.value)}
-              placeholder="Or paste video URL..."
-              style={{ flex: 1, padding: '0.5rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#ffffff' }}
-            />
-            <button
-              onClick={handleUrlSubmit}
-              style={{ padding: '0.5rem 1rem', background: '#22c55e', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer' }}
-            >
-              Load
-            </button>
+          <input
+            type="text"
+            value={videoUrl}
+            onChange={(e) => setVideoUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
+            placeholder="Paste video URL..."
+            style={{ width: '150px', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fbbf24', fontSize: '0.85rem' }}
+          />
+
+          {/* AI Status indicator - inline */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {poseDetectorLoading ? (
+              <>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fbbf24', animation: 'pulse 1s infinite' }} />
+                <span style={{ fontSize: '0.8rem', color: '#fbbf24' }}>Loading AI...</span>
+              </>
+            ) : poseDetectorReady ? (
+              <>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fbbf24' }} />
+                <span style={{ fontSize: '0.8rem', color: '#fbbf24' }}>AI Ready</span>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626' }} />
+                <span style={{ fontSize: '0.8rem', color: '#dc2626' }}>AI Error</span>
+              </>
+            )}
           </div>
         </div>
 
         {videoError && (
-          <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: 'rgba(239, 68, 68, 0.2)', borderRadius: '0.375rem', color: '#ef4444', fontSize: '0.9rem' }}>
+          <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.375rem', color: '#fbbf24', fontSize: '0.85rem' }}>
             {videoError}
           </div>
         )}
@@ -1681,12 +1898,11 @@ function VideoAnalysis() {
                 ref={canvasRef}
                 style={{
                   position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  pointerEvents: 'none',
-                  cursor: getCanvasCursor()
+                  top: `${videoRenderDims.offsetY}px`,
+                  left: `${videoRenderDims.offsetX}px`,
+                  width: videoRenderDims.width ? `${videoRenderDims.width}px` : '100%',
+                  height: videoRenderDims.height ? `${videoRenderDims.height}px` : '100%',
+                  pointerEvents: 'none'
                 }}
               />
             </div>
@@ -1696,39 +1912,39 @@ function VideoAnalysis() {
               onMouseDown={handleVideoResizeStart}
               style={{
                 height: '8px',
-                background: isResizingVideo ? '#3b82f6' : '#374151',
+                background: isResizingVideo ? '#ea580c' : '#78350f',
                 cursor: 'ns-resize',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 transition: 'background 0.2s'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#3b82f6'}
-              onMouseLeave={(e) => !isResizingVideo && (e.currentTarget.style.background = '#374151')}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#ea580c'}
+              onMouseLeave={(e) => !isResizingVideo && (e.currentTarget.style.background = '#78350f')}
             >
-              <div style={{ width: '40px', height: '3px', background: '#9ca3af', borderRadius: '2px' }} />
+              <div style={{ width: '40px', height: '3px', background: '#fbbf24', borderRadius: '2px' }} />
             </div>
 
             {/* Video Controls */}
-            <div style={{ padding: '1rem', background: '#0f172a' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+            <div style={{ padding: '0.75rem', background: '#0f172a' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
                 <button
                   onClick={() => stepFrame(-1)}
-                  style={{ padding: '0.4rem 0.8rem', background: '#374151', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer' }}
+                  style={{ padding: '0.3rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.8rem' }}
                 >
-                  ⏮ -1
+                  -1
                 </button>
                 <button
                   onClick={togglePlay}
-                  style={{ padding: '0.4rem 1rem', background: '#3b82f6', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+                  style={{ padding: '0.3rem 0.75rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.8rem' }}
                 >
-                  {isPlaying ? '⏸ Pause' : '▶ Play'}
+                  {isPlaying ? 'Pause' : 'Play'}
                 </button>
                 <button
                   onClick={() => stepFrame(1)}
-                  style={{ padding: '0.4rem 0.8rem', background: '#374151', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer' }}
+                  style={{ padding: '0.3rem 0.6rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.8rem' }}
                 >
-                  +1 ⏭
+                  +1
                 </button>
 
                 <div style={{ flex: 1 }}>
@@ -1738,25 +1954,180 @@ function VideoAnalysis() {
                     max={totalFrames - 1}
                     value={currentFrame}
                     onChange={(e) => seekToFrame(parseInt(e.target.value))}
-                    style={{ width: '100%' }}
+                    style={{ width: '100%', accentColor: '#ea580c' }}
                   />
                 </div>
 
-                <div style={{ fontSize: '0.85rem', color: '#9ca3af', minWidth: '120px', textAlign: 'right' }}>
+                <div style={{ fontSize: '0.8rem', color: '#fbbf24', minWidth: '100px', textAlign: 'right' }}>
                   Frame {currentFrame} / {totalFrames}
                 </div>
               </div>
 
-              <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', gap: '1rem' }}>
-                <span>Time: {currentTime.toFixed(2)}s</span>
-                <span>Duration: {duration.toFixed(2)}s</span>
-                <span>FPS: {fps}</span>
+              <div style={{ fontSize: '0.75rem', color: '#a16207', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <span>Time: {currentTime.toFixed(2)}s</span>
+                  <span>Duration: {isTrimApplied ? effectiveDuration.toFixed(2) : duration.toFixed(2)}s</span>
+                  <span>FPS: {fps}</span>
+                </div>
+                {isTrimApplied && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#10b981' }}>Trimmed: {effectiveDuration.toFixed(2)}s ({totalFrames} frames)</span>
+                    <button
+                      onClick={resetTrim}
+                      style={{ padding: '0.2rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.7rem' }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                )}
               </div>
+
+              {/* Trim Sliders - only show when NOT trimmed */}
+              {!isTrimApplied ? (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.25rem', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Trim Range</span>
+                    <span style={{ color: '#fbbf24' }}>
+                      {(trimStart * duration).toFixed(2)}s — {(trimEnd * duration).toFixed(2)}s
+                    </span>
+                  </div>
+                  <div
+                    ref={trimContainerRef}
+                    style={{ position: 'relative', height: '24px', background: '#0f172a', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    {/* Inactive regions (trimmed out) */}
+                    <div style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: `${trimStart * 100}%`,
+                      height: '100%',
+                      background: 'rgba(120, 53, 15, 0.5)',
+                      borderRadius: '4px 0 0 4px'
+                    }} />
+                    <div style={{
+                      position: 'absolute',
+                      right: 0,
+                      top: 0,
+                      width: `${(1 - trimEnd) * 100}%`,
+                      height: '100%',
+                      background: 'rgba(120, 53, 15, 0.5)',
+                      borderRadius: '0 4px 4px 0'
+                    }} />
+
+                    {/* Active region */}
+                    <div style={{
+                      position: 'absolute',
+                      left: `${trimStart * 100}%`,
+                      top: 0,
+                      width: `${(trimEnd - trimStart) * 100}%`,
+                      height: '100%',
+                      background: 'rgba(234, 88, 12, 0.3)',
+                      borderTop: '2px solid #ea580c',
+                      borderBottom: '2px solid #ea580c'
+                    }} />
+
+                    {/* Current position indicator */}
+                    <div style={{
+                      position: 'absolute',
+                      left: `${(currentTime / duration) * 100}%`,
+                      top: 0,
+                      width: '2px',
+                      height: '100%',
+                      background: '#fbbf24',
+                      transform: 'translateX(-50%)',
+                      zIndex: 1
+                    }} />
+
+                    {/* Start handle */}
+                    <div
+                      onMouseDown={(e) => handleTrimDragStart('start', e)}
+                      style={{
+                        position: 'absolute',
+                        left: `${trimStart * 100}%`,
+                        top: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '14px',
+                        height: '24px',
+                        background: isDraggingTrim === 'start' ? '#fbbf24' : '#ea580c',
+                        borderRadius: '3px',
+                        cursor: 'ew-resize',
+                        border: '2px solid #fbbf24',
+                        zIndex: 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <div style={{ width: '2px', height: '12px', background: '#fbbf24', borderRadius: '1px' }} />
+                    </div>
+
+                    {/* End handle */}
+                    <div
+                      onMouseDown={(e) => handleTrimDragStart('end', e)}
+                      style={{
+                        position: 'absolute',
+                        left: `${trimEnd * 100}%`,
+                        top: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '14px',
+                        height: '24px',
+                        background: isDraggingTrim === 'end' ? '#fbbf24' : '#ea580c',
+                        borderRadius: '3px',
+                        cursor: 'ew-resize',
+                        border: '2px solid #fbbf24',
+                        zIndex: 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <div style={{ width: '2px', height: '12px', background: '#fbbf24', borderRadius: '1px' }} />
+                    </div>
+                  </div>
+
+                  {/* Apply Trim button */}
+                  {(trimStart > 0 || trimEnd < 1) && (
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                      <button
+                        onClick={applyTrim}
+                        style={{
+                          flex: 1,
+                          padding: '0.35rem',
+                          background: '#ea580c',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          color: '#fef3c7',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          fontWeight: '500'
+                        }}
+                      >
+                        Apply Trim
+                      </button>
+                      <button
+                        onClick={() => { setTrimStart(0); setTrimEnd(1); }}
+                        style={{
+                          padding: '0.35rem 0.75rem',
+                          background: '#78350f',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          color: '#fbbf24',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem'
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               {/* Confidence Heatmap Timeline */}
               {frameConfidences.length > 0 && (
                 <div style={{ marginTop: '0.75rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.25rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.25rem' }}>
                     Tracking Confidence by Frame
                   </div>
                   <div style={{
@@ -1771,7 +2142,7 @@ function VideoAnalysis() {
                       const sampleRate = Math.max(1, Math.floor(frameConfidences.length / 200));
                       if (i % sampleRate !== 0) return null;
 
-                      const color = conf >= 0.7 ? '#22c55e' : conf >= 0.5 ? '#fbbf24' : conf >= 0.3 ? '#f97316' : '#ef4444';
+                      const color = conf >= 0.7 ? '#10b981' : conf >= 0.5 ? '#fbbf24' : conf >= 0.3 ? '#f97316' : '#ef4444';
                       const isCurrentFrame = Math.abs(i - currentFrame) < sampleRate;
 
                       return (
@@ -1791,11 +2162,11 @@ function VideoAnalysis() {
                       );
                     })}
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#64748b', marginTop: '0.25rem' }}>
-                    <span>🟢 High</span>
-                    <span>🟡 Medium</span>
-                    <span>🟠 Low</span>
-                    <span>🔴 Poor</span>
+                  <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.6rem', marginTop: '0.25rem', justifyContent: 'flex-end' }}>
+                    <span style={{ color: '#10b981' }}>● High</span>
+                    <span style={{ color: '#fbbf24' }}>● Med</span>
+                    <span style={{ color: '#f97316' }}>● Low</span>
+                    <span style={{ color: '#ef4444' }}>● Poor</span>
                   </div>
                 </div>
               )}
@@ -1805,165 +2176,164 @@ function VideoAnalysis() {
 
         {/* Control Panel */}
         {videoSource && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }}>
-            {/* Tracking Profile */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>📊 Tracking Profile</h3>
-              <select
-                value={activeProfile}
-                onChange={(e) => setActiveProfile(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#ffffff' }}
-              >
-                {Object.entries(TRACKING_PROFILES).map(([key, profile]) => (
-                  <option key={key} value={key}>{profile.name}</option>
-                ))}
-              </select>
-              <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
-                {TRACKING_PROFILES[activeProfile]?.description}
-              </p>
-            </div>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.75rem',
+            paddingBottom: '2rem'
+          }}>
+            {/* Combined Analysis Setup */}
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: isCalibrated ? '4px solid #10b981' : '4px solid #fbbf24' }}>
 
-            {/* Drill Selection */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>🏃 Drill / Event</h3>
-              <select
-                value={selectedDrill}
-                onChange={(e) => handleDrillSelect(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#ffffff' }}
-              >
-                {Object.entries(DRILL_TEMPLATES).map(([key, drill]) => (
-                  <option key={key} value={key}>{drill.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Calibration */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: isCalibrated ? '4px solid #22c55e' : '4px solid #f59e0b' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>📏 Calibration</h3>
-
+              {/* Tracking Profile */}
               <div style={{ marginBottom: '0.75rem' }}>
-                <label style={{ fontSize: '0.8rem', color: '#64748b' }}>Distance (yards)</label>
-                <input
-                  type="number"
-                  value={calibrationDistance}
-                  onChange={(e) => setCalibrationDistance(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.375rem', color: '#ffffff' }}
-                  placeholder="Enter known distance"
-                />
-              </div>
-
-              <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '0.5rem' }}>
-                Click on video to place {calibrationMarkers.length} / 2 calibration points
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button
-                  onClick={calculateCalibration}
-                  disabled={calibrationMarkers.length < 2 || !calibrationDistance}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    background: calibrationMarkers.length >= 2 && calibrationDistance ? '#22c55e' : '#374151',
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    color: '#ffffff',
-                    cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed',
-                    fontWeight: '500'
-                  }}
+                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Tracking Profile</label>
+                <select
+                  value={activeProfile}
+                  onChange={(e) => setActiveProfile(e.target.value)}
+                  style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
                 >
-                  {isCalibrated ? '✓ Calibrated' : 'Calibrate'}
-                </button>
-                <button
-                  onClick={() => { setCalibrationMarkers([]); setIsCalibrated(false); }}
-                  style={{ padding: '0.5rem', background: '#374151', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer' }}
-                >
-                  Reset
-                </button>
+                  {Object.entries(TRACKING_PROFILES).map(([key, profile]) => (
+                    <option key={key} value={key}>{profile.name}</option>
+                  ))}
+                </select>
               </div>
 
-              {isCalibrated && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#22c55e' }}>
-                  Scale: {pixelsPerYard?.toFixed(2)} px/yard
+              {/* Event */}
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Event</label>
+                <select
+                  value={selectedDrill}
+                  onChange={(e) => handleDrillSelect(e.target.value)}
+                  style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
+                >
+                  {Object.entries(DRILL_TEMPLATES).map(([key, drill]) => (
+                    <option key={key} value={key}>{drill.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Calibration */}
+              <div style={{ marginBottom: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
+                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Calibration</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <input
+                    type="number"
+                    value={calibrationDistance}
+                    onChange={(e) => setCalibrationDistance(e.target.value)}
+                    style={{ width: '60px', padding: '0.3rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
+                    placeholder="10"
+                  />
+                  <span style={{ fontSize: '0.75rem', color: '#fbbf24' }}>yards</span>
+
+                  {!isSettingCalibration && !isCalibrated ? (
+                    <button
+                      onClick={() => { setIsSettingCalibration(true); setCalibrationMarkers([]); }}
+                      style={{ padding: '0.25rem 0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
+                    >
+                      Set Calibration
+                    </button>
+                  ) : !isCalibrated ? (
+                    <button
+                      onClick={() => { calculateCalibration(); setIsSettingCalibration(false); }}
+                      disabled={calibrationMarkers.length < 2 || !calibrationDistance}
+                      style={{ padding: '0.25rem 0.5rem', background: calibrationMarkers.length >= 2 && calibrationDistance ? '#10b981' : '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed', fontSize: '0.75rem' }}
+                    >
+                      Calibrate
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: '0.75rem', color: '#10b981' }}>Calibrated ({pixelsPerYard?.toFixed(0)} px/yd)</span>
+                  )}
+
+                  {(isSettingCalibration || isCalibrated) && (
+                    <button
+                      onClick={() => { setCalibrationMarkers([]); setIsCalibrated(false); setIsSettingCalibration(false); }}
+                      style={{ padding: '0.25rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.75rem' }}
+                    >
+                      Reset
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
-
-            {/* Biomechanics Toggle */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={enableBiomechanics}
-                  onChange={(e) => setEnableBiomechanics(e.target.checked)}
-                  style={{ width: 18, height: 18 }}
-                />
-                <span style={{ color: '#a78bfa', fontWeight: '500' }}>🦴 Enable Biomechanics</span>
-              </label>
-              <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem', marginLeft: '1.75rem' }}>
-                Track spine angle, shin angle, foot angle
-              </p>
-            </div>
-
-            {/* Athlete Selection Mode (for crowded scenes) */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: selectedAthleteBox ? '4px solid #fbbf24' : '4px solid #374151' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#fbbf24', marginBottom: '0.5rem' }}>👤 Athlete Selection</h3>
-              <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.5rem' }}>
-                For crowded scenes (game footage), select the athlete to track
-              </p>
-              <button
-                onClick={() => {
-                  setAthleteSelectionMode(true);
-                  setSelectedAthleteBox(null);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  background: athleteSelectionMode ? '#fbbf24' : '#374151',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  color: athleteSelectionMode ? '#000000' : '#ffffff',
-                  cursor: 'pointer',
-                  fontWeight: '500'
-                }}
-              >
-                {athleteSelectionMode ? '⏳ Click on athlete...' : selectedAthleteBox ? '✓ Athlete Selected' : '🎯 Select Athlete'}
-              </button>
-              {selectedAthleteBox && (
-                <button
-                  onClick={() => setSelectedAthleteBox(null)}
-                  style={{ marginTop: '0.5rem', width: '100%', padding: '0.4rem', background: 'transparent', border: '1px solid #374151', borderRadius: '0.375rem', color: '#9ca3af', cursor: 'pointer', fontSize: '0.8rem' }}
-                >
-                  Clear Selection
-                </button>
-              )}
-            </div>
-
-            {/* Confidence Threshold */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>🎚️ Confidence Threshold</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="0.7"
-                  step="0.05"
-                  value={confidenceThreshold}
-                  onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
-                  style={{ flex: 1 }}
-                />
-                <span style={{ fontSize: '0.85rem', color: '#fbbf24', minWidth: '40px' }}>
-                  {(confidenceThreshold * 100).toFixed(0)}%
-                </span>
+                {isSettingCalibration && !isCalibrated && (
+                  <div style={{ fontSize: '0.7rem', color: '#fbbf24' }}>
+                    Click video to place points ({calibrationMarkers.length}/2)
+                  </div>
+                )}
               </div>
-              <p style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.25rem' }}>
-                Lower = more data but noisier. Higher = cleaner but may miss frames.
-              </p>
+
+              {/* Athlete Selection */}
+              <div style={{ marginBottom: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
+                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Athlete Selection</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => { setAthleteSelectionMode(true); setSelectedAthleteBox(null); }}
+                    style={{ padding: '0.25rem 0.5rem', background: athleteSelectionMode ? '#fbbf24' : '#78350f', border: 'none', borderRadius: '0.25rem', color: athleteSelectionMode ? '#000' : '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
+                  >
+                    {athleteSelectionMode ? 'Click athlete...' : selectedAthleteBox ? 'Selected' : 'Select'}
+                  </button>
+                  {selectedAthleteBox && (
+                    <button
+                      onClick={() => setSelectedAthleteBox(null)}
+                      style={{ padding: '0.25rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.75rem' }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <span style={{ fontSize: '0.7rem', color: '#a16207' }}>For crowded scenes</span>
+                </div>
+              </div>
+
+              {/* Confidence Threshold */}
+              <div style={{ paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
+                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Confidence Threshold</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.7"
+                    step="0.05"
+                    value={confidenceThreshold}
+                    onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
+                    style={{ flex: 1, maxWidth: '150px' }}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: '#fbbf24' }}>{(confidenceThreshold * 100).toFixed(0)}%</span>
+                </div>
+              </div>
             </div>
+
+            {/* Process Button */}
+            <button
+              onClick={isProcessing ? cancelProcessing : processVideo}
+              disabled={!isCalibrated || !poseDetectorReady || manualTrackingMode}
+              style={{
+                padding: '0.4rem 0.75rem',
+                background: isProcessing ? '#7c2d12' : (isCalibrated && poseDetectorReady && !manualTrackingMode ? '#7c2d12' : '#78350f'),
+                border: (isCalibrated && poseDetectorReady && !manualTrackingMode) || isProcessing ? '1px solid #dc2626' : 'none',
+                borderRadius: '0.25rem',
+                color: '#fef3c7',
+                cursor: isCalibrated && poseDetectorReady && !manualTrackingMode ? 'pointer' : 'not-allowed',
+                fontWeight: '500',
+                fontSize: '0.85rem'
+              }}
+            >
+              {isProcessing ? 'Cancel' : 'Analyze with AI'}
+            </button>
+
+            {isProcessing && (
+              <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: '4px solid #ea580c' }}>
+                <div style={{ height: '8px', background: '#78350f', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${processingProgress}%`, background: '#ea580c', transition: 'width 0.1s' }} />
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#fbbf24', marginTop: '0.5rem', textAlign: 'center' }}>
+                  AI tracking: {processingProgress}% complete
+                </div>
+              </div>
+            )}
 
             {/* Manual Tracking Fallback */}
-            <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: manualTrackingMode ? '4px solid #a78bfa' : '4px solid #374151' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#a78bfa', marginBottom: '0.5rem' }}>✏️ Manual Tracking</h3>
-              <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.5rem' }}>
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: manualTrackingMode ? '4px solid #fb923c' : '4px solid #78350f' }}>
+              <h3 style={{ fontSize: '0.85rem', color: '#fb923c', marginBottom: '0.35rem' }}>Manual Tracking</h3>
+              <p style={{ fontSize: '0.75rem', color: '#78350f', marginBottom: '0.35rem' }}>
                 If AI tracking fails, manually place center-of-mass points
               </p>
               <button
@@ -1971,10 +2341,10 @@ function VideoAnalysis() {
                 style={{
                   width: '100%',
                   padding: '0.5rem',
-                  background: manualTrackingMode ? '#a78bfa' : '#374151',
+                  background: manualTrackingMode ? '#fb923c' : '#78350f',
                   border: 'none',
                   borderRadius: '0.375rem',
-                  color: '#ffffff',
+                  color: '#fef3c7',
                   cursor: 'pointer',
                   fontWeight: '500'
                 }}
@@ -1984,7 +2354,7 @@ function VideoAnalysis() {
 
               {manualTrackingMode && (
                 <div style={{ marginTop: '0.75rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.5rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.35rem' }}>
                     {manualCOMPoints.length} point(s) placed
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -1994,10 +2364,10 @@ function VideoAnalysis() {
                       style={{
                         flex: 1,
                         padding: '0.4rem',
-                        background: manualCOMPoints.length >= 2 ? '#22c55e' : '#374151',
+                        background: manualCOMPoints.length >= 2 ? '#10b981' : '#78350f',
                         border: 'none',
                         borderRadius: '0.375rem',
-                        color: '#ffffff',
+                        color: '#fef3c7',
                         cursor: manualCOMPoints.length >= 2 ? 'pointer' : 'not-allowed',
                         fontSize: '0.8rem'
                       }}
@@ -2008,10 +2378,10 @@ function VideoAnalysis() {
                       onClick={() => setManualCOMPoints([])}
                       style={{
                         padding: '0.4rem 0.75rem',
-                        background: '#374151',
+                        background: '#78350f',
                         border: 'none',
                         borderRadius: '0.375rem',
-                        color: '#ffffff',
+                        color: '#fef3c7',
                         cursor: 'pointer',
                         fontSize: '0.8rem'
                       }}
@@ -2019,178 +2389,68 @@ function VideoAnalysis() {
                       Clear
                     </button>
                   </div>
-                  <p style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.65rem', color: '#78350f', marginTop: '0.5rem' }}>
                     Tip: Step through frames, click to place points at start, key frames, and end
                   </p>
                 </div>
               )}
             </div>
 
-            {/* Process Button */}
-            <button
-              onClick={isProcessing ? cancelProcessing : processVideo}
-              disabled={!isCalibrated || !poseDetectorReady || manualTrackingMode}
-              style={{
-                padding: '1rem',
-                background: isProcessing ? '#ef4444' : (isCalibrated && poseDetectorReady && !manualTrackingMode ? '#8b5cf6' : '#374151'),
-                border: 'none',
-                borderRadius: '0.5rem',
-                color: '#ffffff',
-                cursor: isCalibrated && poseDetectorReady && !manualTrackingMode ? 'pointer' : 'not-allowed',
-                fontWeight: '600',
-                fontSize: '1rem'
-              }}
-            >
-              {isProcessing ? '⏹ Cancel Processing' : '🤖 Analyze with AI'}
-            </button>
-
-            {/* Tracking Quality Indicator */}
-            {trackingQuality && (
-              <div style={{
-                background: '#1e293b',
-                padding: '1rem',
-                borderRadius: '0.5rem',
-                borderLeft: `4px solid ${
-                  trackingQuality.rating === 'excellent' ? '#22c55e' :
-                  trackingQuality.rating === 'good' ? '#3b82f6' :
-                  trackingQuality.rating === 'fair' ? '#f59e0b' :
-                  trackingQuality.rating === 'manual' ? '#a78bfa' :
-                  '#ef4444'
-                }`
-              }}>
-                <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>📊 Tracking Quality</h3>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <span style={{
-                    fontSize: '1.25rem',
-                    fontWeight: 'bold',
-                    color: trackingQuality.rating === 'excellent' ? '#22c55e' :
-                           trackingQuality.rating === 'good' ? '#3b82f6' :
-                           trackingQuality.rating === 'fair' ? '#f59e0b' :
-                           trackingQuality.rating === 'manual' ? '#a78bfa' :
-                           '#ef4444',
-                    textTransform: 'uppercase'
-                  }}>
-                    {trackingQuality.rating === 'manual' ? '✏️ Manual' : trackingQuality.rating}
-                  </span>
-                  <span style={{ fontSize: '0.85rem', color: '#9ca3af' }}>
-                    ({trackingQuality.avgConfidence.toFixed(0)}% avg confidence)
-                  </span>
-                </div>
-
-                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                  <div>Good frames: {trackingQuality.goodFramePercent.toFixed(0)}%</div>
-                  <div>Missing frames: {trackingQuality.missingFrames} / {trackingQuality.totalFrames}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Quality Warning */}
-            {showQualityWarning && (
-              <div style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid #ef4444',
-                padding: '0.75rem',
-                borderRadius: '0.5rem'
-              }}>
-                <div style={{ fontSize: '0.85rem', color: '#ef4444', fontWeight: '600', marginBottom: '0.25rem' }}>
-                  ⚠️ Low Tracking Quality Detected
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.5rem' }}>
-                  AI had difficulty tracking the athlete. This may be due to:
-                </div>
-                <ul style={{ fontSize: '0.7rem', color: '#64748b', margin: 0, paddingLeft: '1rem' }}>
-                  <li>Video recorded from too far away</li>
-                  <li>Multiple people in frame (use Athlete Selection)</li>
-                  <li>Poor lighting or video quality</li>
-                  <li>Athlete partially obscured</li>
-                </ul>
-                <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    onClick={() => {
-                      setManualTrackingMode(true);
-                      setShowQualityWarning(false);
-                    }}
-                    style={{ padding: '0.4rem 0.75rem', background: '#a78bfa', border: 'none', borderRadius: '0.25rem', color: '#ffffff', cursor: 'pointer', fontSize: '0.75rem' }}
-                  >
-                    Try Manual Mode
-                  </button>
-                  <button
-                    onClick={() => setShowQualityWarning(false)}
-                    style={{ padding: '0.4rem 0.75rem', background: '#374151', border: 'none', borderRadius: '0.25rem', color: '#9ca3af', cursor: 'pointer', fontSize: '0.75rem' }}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {isProcessing && (
-              <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
-                <div style={{ height: '8px', background: '#374151', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${processingProgress}%`, background: '#8b5cf6', transition: 'width 0.1s' }} />
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#a78bfa', marginTop: '0.5rem', textAlign: 'center' }}>
-                  AI tracking: {processingProgress}% complete
-                </div>
-              </div>
-            )}
-
             {/* Time Overrides */}
             {trackingData.length > 0 && (
-              <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: '4px solid #f59e0b' }}>
+              <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: '4px solid #fbbf24' }}>
                 <div
                   onClick={() => setShowTimeOverrides(!showTimeOverrides)}
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
                 >
-                  <h3 style={{ fontSize: '0.9rem', color: '#f59e0b' }}>⏱️ Time Overrides (Field Measured)</h3>
-                  <span style={{ color: '#64748b' }}>{showTimeOverrides ? '▼' : '▶'}</span>
+                  <h3 style={{ fontSize: '0.85rem', color: '#fbbf24' }}>Time Overrides (Field Measured)</h3>
+                  <span style={{ color: '#78350f' }}>{showTimeOverrides ? '−' : '+'}</span>
                 </div>
 
                 {showTimeOverrides && (
                   <div style={{ marginTop: '0.75rem' }}>
-                    <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                    <p style={{ fontSize: '0.75rem', color: '#78350f', marginBottom: '0.75rem' }}>
                       Enter field-measured times to override video-calculated values. Physics will rescale accordingly.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                       <div>
-                        <label style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Start (s)</label>
+                        <label style={{ fontSize: '0.75rem', color: '#a16207' }}>Start (s)</label>
                         <input
                           type="number"
                           step="0.01"
                           value={timeOverrides.startTime ?? ''}
                           onChange={(e) => updateTimeOverride('startTime', e.target.value)}
                           placeholder="Auto"
-                          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.25rem', color: '#ffffff', fontSize: '0.85rem' }}
+                          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.85rem' }}
                         />
                       </div>
                       <div>
-                        <label style={{ fontSize: '0.75rem', color: '#9ca3af' }}>End (s)</label>
+                        <label style={{ fontSize: '0.75rem', color: '#a16207' }}>End (s)</label>
                         <input
                           type="number"
                           step="0.01"
                           value={timeOverrides.endTime ?? ''}
                           onChange={(e) => updateTimeOverride('endTime', e.target.value)}
                           placeholder="Auto"
-                          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.25rem', color: '#ffffff', fontSize: '0.85rem' }}
+                          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.85rem' }}
                         />
                       </div>
                     </div>
 
                     <div style={{ marginTop: '0.5rem' }}>
-                      <label style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Split Times</label>
+                      <label style={{ fontSize: '0.75rem', color: '#a16207' }}>Split Times</label>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginTop: '0.25rem' }}>
                         {[10, 20, 30, 40].map(dist => (
                           <div key={dist}>
-                            <label style={{ fontSize: '0.65rem', color: '#64748b' }}>{dist}yd</label>
+                            <label style={{ fontSize: '0.65rem', color: '#78350f' }}>{dist}yd</label>
                             <input
                               type="number"
                               step="0.01"
                               value={timeOverrides.splits[dist] ?? ''}
                               onChange={(e) => updateTimeOverride(`split-${dist}`, e.target.value)}
                               placeholder="Auto"
-                              style={{ width: '100%', padding: '0.3rem', background: '#0f172a', border: '1px solid #374151', borderRadius: '0.25rem', color: '#ffffff', fontSize: '0.8rem' }}
+                              style={{ width: '100%', padding: '0.3rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
                             />
                           </div>
                         ))}
@@ -2199,7 +2459,7 @@ function VideoAnalysis() {
 
                     <button
                       onClick={recalculateWithOverrides}
-                      style={{ marginTop: '0.75rem', width: '100%', padding: '0.5rem', background: '#f59e0b', border: 'none', borderRadius: '0.375rem', color: '#000000', cursor: 'pointer', fontWeight: '600' }}
+                      style={{ marginTop: '0.75rem', width: '100%', padding: '0.5rem', background: '#fbbf24', border: 'none', borderRadius: '0.375rem', color: '#000000', cursor: 'pointer', fontWeight: '600' }}
                     >
                       Apply Overrides
                     </button>
@@ -2210,9 +2470,9 @@ function VideoAnalysis() {
 
             {/* Manual Keyframe Adjustment Info */}
             {trackingData.length > 0 && (
-              <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.5rem' }}>
-                <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', marginBottom: '0.5rem' }}>✏️ Manual Adjustment</h3>
-                <p style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem' }}>
+                <h3 style={{ fontSize: '0.85rem', color: '#a16207', marginBottom: '0.35rem' }}>Manual Adjustment</h3>
+                <p style={{ fontSize: '0.75rem', color: '#78350f' }}>
                   Click any keypoint on the skeleton to select it, then click on the video to reposition. Frames between manual keyframes will interpolate.
                 </p>
                 {manualKeyframes.length > 0 && (
@@ -2228,41 +2488,41 @@ function VideoAnalysis() {
 
       {/* Results Section */}
       {analysisResults && (
-        <div style={{ marginTop: '1rem', background: '#1e293b', padding: '1rem', borderRadius: '0.5rem', borderLeft: '4px solid #a78bfa' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <h3 style={{ fontSize: '1rem', color: '#a78bfa' }}>📊 Analysis Results</h3>
+        <div style={{ marginTop: '0.75rem', marginBottom: '1rem', background: '#1e293b', padding: '0.5rem', borderRadius: '0.25rem', borderLeft: '3px solid #fb923c' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <h3 style={{ fontSize: '0.85rem', color: '#fb923c' }}>Results</h3>
 
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               {analysisResults.hasTimeOverrides && (
-                <span style={{ fontSize: '0.75rem', background: '#f59e0b', color: '#000', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
-                  Using Field Times
+                <span style={{ fontSize: '0.65rem', background: '#fbbf24', color: '#000', padding: '0.15rem 0.35rem', borderRadius: '0.2rem' }}>
+                  Field Times
                 </span>
               )}
               {primaryAthlete && (
                 <button
                   onClick={saveToAthlete}
-                  style={{ padding: '0.4rem 0.8rem', background: '#22c55e', border: 'none', borderRadius: '0.375rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600', fontSize: '0.85rem' }}
+                  style={{ padding: '0.25rem 0.5rem', background: '#10b981', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.7rem' }}
                 >
-                  💾 Save to {primaryAthlete.firstName}
+                  Save to {primaryAthlete.firstName}
                 </button>
               )}
             </div>
           </div>
 
           {/* Result Tabs */}
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
             {['summary', 'speed', 'acceleration', 'power', ...(enableBiomechanics && biomechanicsResults ? ['biomechanics'] : []), 'data'].map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveResultTab(tab)}
                 style={{
-                  padding: '0.4rem 0.8rem',
-                  background: activeResultTab === tab ? '#5b21b6' : '#374151',
+                  padding: '0.25rem 0.5rem',
+                  background: activeResultTab === tab ? '#5b21b6' : '#78350f',
                   border: 'none',
-                  borderRadius: '0.375rem',
+                  borderRadius: '0.25rem',
                   color: activeResultTab === tab ? '#c4b5fd' : '#9ca3af',
                   cursor: 'pointer',
-                  fontSize: '0.85rem',
+                  fontSize: '0.7rem',
                   fontWeight: activeResultTab === tab ? '600' : '400',
                   textTransform: 'capitalize'
                 }}
@@ -2274,48 +2534,48 @@ function VideoAnalysis() {
 
           {/* Summary Tab */}
           {activeResultTab === 'summary' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
-              <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.8rem', color: '#3b82f6', marginBottom: '0.25rem' }}>Max Speed</div>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: '0.5rem' }}>
+              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.6rem', color: '#ea580c' }}>Max Speed</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
                   {analysisResults.summary.maxVelocityMph.toFixed(1)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>MPH</div>
+                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>MPH</div>
               </div>
 
-              <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginBottom: '0.25rem' }}>Peak Acceleration</div>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
+              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.6rem', color: '#fbbf24' }}>Peak Accel</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
                   {analysisResults.summary.peakAccelerationG.toFixed(2)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>g-force</div>
+                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>g</div>
               </div>
 
-              <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.8rem', color: '#ef4444', marginBottom: '0.25rem' }}>Max Power</div>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
-                  {analysisResults.summary.maxPower ? analysisResults.summary.maxPower.toFixed(0) : 'N/A'}
+              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.6rem', color: '#dc2626' }}>Max Power</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
+                  {analysisResults.summary.maxPower ? analysisResults.summary.maxPower.toFixed(0) : '-'}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Watts</div>
+                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>W</div>
               </div>
 
-              <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.8rem', color: '#22c55e', marginBottom: '0.25rem' }}>Total Time</div>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fbbf24' }}>
+              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.6rem', color: '#10b981' }}>Time</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
                   {analysisResults.summary.totalTime.toFixed(2)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>seconds</div>
+                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>sec</div>
               </div>
 
               {/* Split Times */}
-              <div style={{ gridColumn: 'span 2', background: '#0f172a', padding: '1rem', borderRadius: '0.5rem' }}>
-                <div style={{ fontSize: '0.8rem', color: '#22c55e', marginBottom: '0.5rem' }}>Split Times</div>
-                <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ gridColumn: 'span 2', background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem' }}>
+                <div style={{ fontSize: '0.6rem', color: '#10b981', marginBottom: '0.25rem' }}>Splits</div>
+                <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: '0.25rem' }}>
                   {[10, 20, 30, 40].map(yard => (
-                    <div key={yard} style={{ textAlign: 'center', minWidth: '60px' }}>
-                      <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{yard} yards</div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#fbbf24' }}>
-                        {analysisResults.summary.splits[yard]?.toFixed(2) || '-'}s
+                    <div key={yard} style={{ textAlign: 'center', minWidth: '40px' }}>
+                      <div style={{ fontSize: '0.55rem', color: '#78350f' }}>{yard}yd</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#fbbf24' }}>
+                        {analysisResults.summary.splits[yard] ? `${analysisResults.summary.splits[yard].toFixed(2)}s` : '-'}
                       </div>
                     </div>
                   ))}
@@ -2326,26 +2586,26 @@ function VideoAnalysis() {
 
           {/* Speed Chart */}
           {activeResultTab === 'speed' && (
-            <div style={{ height: '300px' }}>
+            <div style={{ height: '200px' }}>
               <canvas ref={speedChartRef} />
             </div>
           )}
 
           {/* Acceleration Chart */}
           {activeResultTab === 'acceleration' && (
-            <div style={{ height: '300px' }}>
+            <div style={{ height: '200px' }}>
               <canvas ref={accelChartRef} />
             </div>
           )}
 
           {/* Power Chart */}
           {activeResultTab === 'power' && (
-            <div style={{ height: '300px' }}>
+            <div style={{ height: '200px' }}>
               {getEffectiveWeight() ? (
                 <canvas ref={powerChartRef} />
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
-                  Select an athlete or enter weight to calculate power
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
+                  Select athlete or enter weight for power
                 </div>
               )}
             </div>
@@ -2353,11 +2613,11 @@ function VideoAnalysis() {
 
           {/* Biomechanics Charts */}
           {activeResultTab === 'biomechanics' && biomechanicsResults && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div style={{ height: '250px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+              <div style={{ height: '180px' }}>
                 <canvas ref={spineAngleChartRef} />
               </div>
-              <div style={{ height: '250px' }}>
+              <div style={{ height: '180px' }}>
                 <canvas ref={shinAngleChartRef} />
               </div>
             </div>
@@ -2365,32 +2625,32 @@ function VideoAnalysis() {
 
           {/* Data Table */}
           {activeResultTab === 'data' && (
-            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+            <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
                 <thead>
                   <tr style={{ background: '#0f172a', position: 'sticky', top: 0 }}>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#9ca3af', borderBottom: '1px solid #374151' }}>Frame</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#9ca3af', borderBottom: '1px solid #374151' }}>Time (s)</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#9ca3af', borderBottom: '1px solid #374151' }}>Position (yd)</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#9ca3af', borderBottom: '1px solid #374151' }}>Speed (MPH)</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#9ca3af', borderBottom: '1px solid #374151' }}>Accel (g)</th>
+                    <th style={{ padding: '0.3rem', textAlign: 'left', color: '#a16207', borderBottom: '1px solid #78350f' }}>Frame</th>
+                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Time</th>
+                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Pos (yd)</th>
+                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>MPH</th>
+                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Accel (g)</th>
                     {getEffectiveWeight() && (
-                      <th style={{ padding: '0.5rem', textAlign: 'right', color: '#9ca3af', borderBottom: '1px solid #374151' }}>Power (W)</th>
+                      <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Power</th>
                     )}
                   </tr>
                 </thead>
                 <tbody>
                   {analysisResults.frames.filter((_, i) => i % 3 === 0).map((frame) => (
                     <tr key={frame.frame} style={{ borderBottom: '1px solid #1e293b' }}>
-                      <td style={{ padding: '0.4rem', color: '#64748b' }}>{frame.frame}</td>
-                      <td style={{ padding: '0.4rem', textAlign: 'right', color: '#fbbf24' }}>{frame.time.toFixed(2)}</td>
-                      <td style={{ padding: '0.4rem', textAlign: 'right', color: '#fbbf24' }}>{frame.position.toFixed(1)}</td>
-                      <td style={{ padding: '0.4rem', textAlign: 'right', color: '#3b82f6' }}>{frame.velocityMph.toFixed(1)}</td>
-                      <td style={{ padding: '0.4rem', textAlign: 'right', color: frame.accelerationG > 0 ? '#22c55e' : '#ef4444' }}>
+                      <td style={{ padding: '0.25rem', color: '#78350f' }}>{frame.frame}</td>
+                      <td style={{ padding: '0.25rem', textAlign: 'right', color: '#fbbf24' }}>{frame.time.toFixed(2)}</td>
+                      <td style={{ padding: '0.25rem', textAlign: 'right', color: '#fbbf24' }}>{frame.position.toFixed(1)}</td>
+                      <td style={{ padding: '0.25rem', textAlign: 'right', color: '#ea580c' }}>{frame.velocityMph.toFixed(1)}</td>
+                      <td style={{ padding: '0.25rem', textAlign: 'right', color: frame.accelerationG > 0 ? '#10b981' : '#ef4444' }}>
                         {frame.accelerationG > 0 ? '+' : ''}{frame.accelerationG.toFixed(2)}
                       </td>
                       {getEffectiveWeight() && (
-                        <td style={{ padding: '0.4rem', textAlign: 'right', color: '#ef4444' }}>{frame.power?.toFixed(0) || '-'}</td>
+                        <td style={{ padding: '0.25rem', textAlign: 'right', color: '#dc2626' }}>{frame.power?.toFixed(0) || '-'}</td>
                       )}
                     </tr>
                   ))}
@@ -2415,26 +2675,26 @@ function VideoAnalysis() {
             {!isRecording ? (
               <button
                 onClick={startRecording}
-                style={{ padding: '1rem 2rem', background: '#ef4444', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600', fontSize: '1.1rem' }}
+                style={{ padding: '1rem 2rem', background: '#7c2d12', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600', fontSize: '1.1rem' }}
               >
-                🔴 Start Recording
+                ● Start Recording
               </button>
             ) : (
               <>
-                <div style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '1.5rem' }}>
-                  🔴 {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                <div style={{ color: '#dc2626', fontWeight: 'bold', fontSize: '1.5rem' }}>
+                  ● {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
                 </div>
                 <button
                   onClick={stopRecording}
-                  style={{ padding: '1rem 2rem', background: '#374151', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+                  style={{ padding: '1rem 2rem', background: '#78350f', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600' }}
                 >
-                  ⏹ Stop
+                  Stop
                 </button>
               </>
             )}
             <button
               onClick={stopRecordingMode}
-              style={{ padding: '1rem 2rem', background: '#1e293b', border: '1px solid #374151', borderRadius: '0.5rem', color: '#9ca3af', cursor: 'pointer' }}
+              style={{ padding: '1rem 2rem', background: '#1e293b', border: '1px solid #78350f', borderRadius: '0.5rem', color: '#a16207', cursor: 'pointer' }}
             >
               Cancel
             </button>
@@ -2445,7 +2705,7 @@ function VideoAnalysis() {
       {/* Recorded Video Review */}
       {recordedVideoUrl && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
-          <h2 style={{ color: '#ffffff', marginBottom: '1rem' }}>Review Recording</h2>
+          <h2 style={{ color: '#fef3c7', marginBottom: '1rem' }}>Review Recording</h2>
           <video
             src={recordedVideoUrl}
             controls
@@ -2454,19 +2714,19 @@ function VideoAnalysis() {
           <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
             <button
               onClick={useRecordedVideo}
-              style={{ padding: '0.75rem 1.5rem', background: '#22c55e', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+              style={{ padding: '0.75rem 1.5rem', background: '#10b981', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600' }}
             >
               ✓ Use for Analysis
             </button>
             <button
               onClick={saveRecordedVideo}
-              style={{ padding: '0.75rem 1.5rem', background: '#3b82f6', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+              style={{ padding: '0.75rem 1.5rem', background: '#ea580c', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600' }}
             >
-              💾 Download
+              Download
             </button>
             <button
               onClick={discardRecordedVideo}
-              style={{ padding: '0.75rem 1.5rem', background: '#ef4444', border: 'none', borderRadius: '0.5rem', color: '#ffffff', cursor: 'pointer', fontWeight: '600' }}
+              style={{ padding: '0.75rem 1.5rem', background: '#7c2d12', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600' }}
             >
               ✕ Discard
             </button>
@@ -2476,10 +2736,9 @@ function VideoAnalysis() {
 
       {/* Empty State */}
       {!videoSource && !isRecordingMode && !recordedVideoUrl && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', color: '#64748b' }}>
-          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📹</div>
-          <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>No Video Loaded</div>
-          <div style={{ fontSize: '0.9rem', textAlign: 'center', maxWidth: '400px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', color: '#78350f' }}>
+          <div style={{ fontSize: '1.2rem', marginBottom: '0.35rem' }}>No Video Loaded</div>
+          <div style={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: '400px' }}>
             Record a video, upload a file, or paste a URL to begin analyzing athlete performance with AI-powered motion tracking.
           </div>
         </div>
