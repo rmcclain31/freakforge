@@ -19,7 +19,9 @@ import {
 import {
   TRACKING_PROFILES,
   SKELETON_CONNECTIONS,
-  MOVENET_KEYPOINTS
+  KEYPOINTS,
+  getKeypointColor,
+  KEYPOINT_COLORS as KEYPOINT_COLOR_MAP
 } from '../../utils/trackingProfiles';
 
 Chart.register(...registerables);
@@ -30,15 +32,18 @@ const ATHLETE_COLORS = [
   { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgba(16, 185, 129, 1)', point: 'rgba(16, 185, 129, 1)', name: 'Green' },
 ];
 
-// Keypoint colors for visualization
+// Keypoint colors for visualization (extended for BlazePose)
 const KEYPOINT_COLORS = {
-  head: '#fbbf24',      // Yellow - ears
-  shoulder: '#ea580c',  // Blue
-  elbow: '#ea580c',     // Purple
-  hip: '#10b981',       // Green
-  knee: '#f97316',      // Orange
-  ankle: '#ef4444',     // Red
-  centerOfMass: '#ffffff' // White
+  head: '#fbbf24',      // amber - nose, ears, eyes
+  shoulder: '#3b82f6',  // blue
+  elbow: '#22c55e',     // green
+  wrist: '#a855f7',     // purple
+  hip: '#f97316',       // orange
+  knee: '#14b8a6',      // teal
+  ankle: '#ef4444',     // red
+  foot: '#ec4899',      // pink - heel, toe
+  centerOfMass: '#ffffff', // White
+  headPosition: '#fbbf24'  // Yellow
 };
 
 // Drill templates with cone/marker configurations
@@ -169,6 +174,16 @@ function VideoAnalysis() {
   const [totalFrames, setTotalFrames] = useState(0);
   const [fps, setFps] = useState(30);
 
+  // File info state
+  const [fileInfo, setFileInfo] = useState({
+    name: '',
+    path: '',
+    size: 0,
+    width: 0,
+    height: 0,
+    fps: 30
+  });
+
   // Recording state
   const [isRecordingMode, setIsRecordingMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -196,6 +211,14 @@ function VideoAnalysis() {
   const [effectiveDuration, setEffectiveDuration] = useState(0);
   const [effectiveStartTime, setEffectiveStartTime] = useState(0);
   const trimContainerRef = useRef(null);
+
+  // Spatial Crop state (crop video frame to region of interest)
+  const [cropMode, setCropMode] = useState(false);
+  const [isCropApplied, setIsCropApplied] = useState(false);
+  const [cropBounds, setCropBounds] = useState({ left: 0, top: 0, right: 1, bottom: 1 }); // 0-1 percentages
+  const [cropDragging, setCropDragging] = useState(null); // 'left' | 'right' | 'top' | 'bottom' | 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight' | null
+  const [originalVideoDimensions, setOriginalVideoDimensions] = useState({ width: 0, height: 0 });
+  const cropCanvasRef = useRef(null); // Hidden canvas for cropping frames
 
   // Save preferences
   const [saveMode, setSaveMode] = useState('individual');
@@ -503,12 +526,42 @@ function VideoAnalysis() {
 
   // ============ VIDEO FILE HANDLING ============
 
+  // Format file size for display
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '-';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  };
+
+  // Get resolution label from dimensions
+  const getResolutionLabel = (width, height) => {
+    if (!width || !height) return '-';
+    const h = Math.min(width, height); // Use shorter dimension for standard naming
+    const w = Math.max(width, height);
+    if (h >= 2160 || w >= 3840) return '4K';
+    if (h >= 1080 || w >= 1920) return 'HD';
+    if (h >= 720 || w >= 1280) return '720p';
+    if (h >= 480 || w >= 854) return '480p';
+    return `${width}x${height}`;
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
       const url = URL.createObjectURL(file);
       setVideoSource(url);
       setVideoError('');
+
+      // Store file info
+      setFileInfo(prev => ({
+        ...prev,
+        name: file.name,
+        path: file.webkitRelativePath || file.name,
+        size: file.size
+      }));
+
       resetAnalysis();
     }
   };
@@ -565,6 +618,10 @@ function VideoAnalysis() {
     // Reset manual tracking
     setManualTrackingMode(false);
     setManualCOMPoints([]);
+    // Reset spatial crop
+    setCropMode(false);
+    setIsCropApplied(false);
+    setCropBounds({ left: 0, top: 0, right: 1, bottom: 1 });
   };
 
   // Calculate video render dimensions within container
@@ -651,11 +708,164 @@ function VideoAnalysis() {
     setTrimEnd(1);
   }, [videoSource]);
 
+  // ============ SPATIAL CROP HANDLERS ============
+
+  // Toggle crop mode
+  const toggleCropMode = () => {
+    if (cropMode) {
+      // Exiting crop mode - keep the bounds but don't apply yet
+      setCropMode(false);
+    } else {
+      // Entering crop mode - pause video
+      if (videoRef.current && !videoRef.current.paused) {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      }
+      setCropMode(true);
+    }
+  };
+
+  // Apply the crop
+  const applyCrop = () => {
+    if (!videoRef.current) return;
+
+    // Store original dimensions before cropping
+    setOriginalVideoDimensions({
+      width: videoRef.current.videoWidth,
+      height: videoRef.current.videoHeight
+    });
+
+    setIsCropApplied(true);
+    setCropMode(false);
+
+    // Reset calibration since pixel coordinates will change
+    setCalibrationMarkers([]);
+    setIsCalibrated(false);
+    setPixelsPerYard(null);
+    setTrackingData([]);
+    setAnalysisResults(null);
+  };
+
+  // Reset crop to full frame
+  const resetCrop = () => {
+    setCropBounds({ left: 0, top: 0, right: 1, bottom: 1 });
+    setIsCropApplied(false);
+    setCropMode(false);
+
+    // Reset calibration since coordinates changed
+    setCalibrationMarkers([]);
+    setIsCalibrated(false);
+    setPixelsPerYard(null);
+    setTrackingData([]);
+    setAnalysisResults(null);
+  };
+
+  // Handle crop handle drag start
+  const handleCropDragStart = (handle, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCropDragging(handle);
+  };
+
+  // Handle crop drag move
+  const handleCropDragMove = useCallback((e) => {
+    if (!cropDragging || !containerRef.current || !videoRef.current) return;
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const { offsetX, offsetY, width: renderWidth, height: renderHeight } = videoRenderDims;
+
+    if (!renderWidth || !renderHeight) return;
+
+    // Calculate position relative to video area (0-1)
+    const relX = Math.max(0, Math.min(1, (e.clientX - containerRect.left - offsetX) / renderWidth));
+    const relY = Math.max(0, Math.min(1, (e.clientY - containerRect.top - offsetY) / renderHeight));
+
+    const minSize = 0.1; // Minimum crop size (10% of dimension)
+
+    setCropBounds(prev => {
+      const newBounds = { ...prev };
+
+      switch (cropDragging) {
+        case 'left':
+          newBounds.left = Math.min(relX, prev.right - minSize);
+          break;
+        case 'right':
+          newBounds.right = Math.max(relX, prev.left + minSize);
+          break;
+        case 'top':
+          newBounds.top = Math.min(relY, prev.bottom - minSize);
+          break;
+        case 'bottom':
+          newBounds.bottom = Math.max(relY, prev.top + minSize);
+          break;
+        case 'topLeft':
+          newBounds.left = Math.min(relX, prev.right - minSize);
+          newBounds.top = Math.min(relY, prev.bottom - minSize);
+          break;
+        case 'topRight':
+          newBounds.right = Math.max(relX, prev.left + minSize);
+          newBounds.top = Math.min(relY, prev.bottom - minSize);
+          break;
+        case 'bottomLeft':
+          newBounds.left = Math.min(relX, prev.right - minSize);
+          newBounds.bottom = Math.max(relY, prev.top + minSize);
+          break;
+        case 'bottomRight':
+          newBounds.right = Math.max(relX, prev.left + minSize);
+          newBounds.bottom = Math.max(relY, prev.top + minSize);
+          break;
+        default:
+          break;
+      }
+
+      return newBounds;
+    });
+  }, [cropDragging, videoRenderDims]);
+
+  // Handle crop drag end
+  const handleCropDragEnd = useCallback(() => {
+    setCropDragging(null);
+  }, []);
+
+  // Global handlers for crop dragging
+  useEffect(() => {
+    if (cropDragging) {
+      window.addEventListener('mousemove', handleCropDragMove);
+      window.addEventListener('mouseup', handleCropDragEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleCropDragMove);
+        window.removeEventListener('mouseup', handleCropDragEnd);
+      };
+    }
+  }, [cropDragging, handleCropDragMove, handleCropDragEnd]);
+
+  // Get cropped video dimensions
+  const getCroppedDimensions = useCallback(() => {
+    if (!videoRef.current) return { width: 0, height: 0, cropX: 0, cropY: 0, cropWidth: 0, cropHeight: 0 };
+
+    const videoWidth = originalVideoDimensions.width || videoRef.current.videoWidth || 640;
+    const videoHeight = originalVideoDimensions.height || videoRef.current.videoHeight || 360;
+
+    if (!isCropApplied) {
+      return { width: videoWidth, height: videoHeight, cropX: 0, cropY: 0, cropWidth: videoWidth, cropHeight: videoHeight };
+    }
+
+    const cropX = Math.round(cropBounds.left * videoWidth);
+    const cropY = Math.round(cropBounds.top * videoHeight);
+    const cropWidth = Math.round((cropBounds.right - cropBounds.left) * videoWidth);
+    const cropHeight = Math.round((cropBounds.bottom - cropBounds.top) * videoHeight);
+
+    return { width: cropWidth, height: cropHeight, cropX, cropY, cropWidth, cropHeight };
+  }, [cropBounds, isCropApplied, originalVideoDimensions]);
+
   // ============ VIDEO PLAYBACK ============
 
   const handleVideoLoad = () => {
     if (videoRef.current) {
       const dur = videoRef.current.duration;
+      const width = videoRef.current.videoWidth || 640;
+      const height = videoRef.current.videoHeight || 360;
+
       setDuration(dur);
       setTotalFrames(Math.floor(dur * fps));
       setEffectiveDuration(dur);
@@ -664,10 +874,18 @@ function VideoAnalysis() {
       setTrimStart(0);
       setTrimEnd(1);
 
+      // Update file info with video dimensions
+      setFileInfo(prev => ({
+        ...prev,
+        width,
+        height,
+        fps
+      }));
+
       // Initialize canvas dimensions
       if (canvasRef.current) {
-        canvasRef.current.width = videoRef.current.videoWidth || 640;
-        canvasRef.current.height = videoRef.current.videoHeight || 360;
+        canvasRef.current.width = width;
+        canvasRef.current.height = height;
       }
 
       // Calculate video render dimensions after a brief delay to ensure layout is complete
@@ -1040,7 +1258,27 @@ function VideoAnalysis() {
     const dy = calibrationMarkers[1].y - calibrationMarkers[0].y;
     const pixelDistance = Math.sqrt(dx * dx + dy * dy);
 
-    setPixelsPerYard(pixelDistance / distance);
+    // Debug info
+    console.log('Calibration Debug:', {
+      marker1: calibrationMarkers[0],
+      marker2: calibrationMarkers[1],
+      dx, dy,
+      pixelDistance,
+      distance,
+      pixelsPerYard: pixelDistance / distance,
+      videoWidth: videoRef.current?.videoWidth,
+      videoHeight: videoRef.current?.videoHeight
+    });
+
+    // Sanity check - if pixels per yard is suspiciously low, warn user
+    const calculatedPxPerYard = pixelDistance / distance;
+    if (calculatedPxPerYard < 5) {
+      setVideoError(`Warning: Calibration seems off (${calculatedPxPerYard.toFixed(1)} px/yd). Try placing markers further apart.`);
+    } else {
+      setVideoError('');
+    }
+
+    setPixelsPerYard(calculatedPxPerYard);
     setIsCalibrated(true);
   };
 
@@ -1068,6 +1306,9 @@ function VideoAnalysis() {
       const startTime = isTrimApplied ? effectiveStartTime : (trimStart * duration);
       const endTime = isTrimApplied ? (effectiveStartTime + effectiveDuration) : (trimEnd * duration);
 
+      // Get crop region if applied
+      const cropRegion = isCropApplied ? getCroppedDimensions() : null;
+
       // Process video with AI pose detection
       const frameData = await processVideoWithAI(
         videoRef.current,
@@ -1079,7 +1320,8 @@ function VideoAnalysis() {
           confidenceThreshold,
           athleteRegion: selectedAthleteBox,
           startTime,
-          endTime
+          endTime,
+          cropRegion // Pass crop bounds for frame extraction
         },
         (progress) => setProcessingProgress(progress),
         () => cancelProcessingRef.current
@@ -1411,22 +1653,8 @@ function VideoAnalysis() {
         if (!kp || kp.score < confidenceThreshold) return;
 
         const keypointIdx = parseInt(idx);
-        let color = '#ea580c';
-
-        // Color code by body part
-        if ([MOVENET_KEYPOINTS.LEFT_EAR, MOVENET_KEYPOINTS.RIGHT_EAR].includes(keypointIdx)) {
-          color = KEYPOINT_COLORS.head;
-        } else if ([MOVENET_KEYPOINTS.LEFT_SHOULDER, MOVENET_KEYPOINTS.RIGHT_SHOULDER].includes(keypointIdx)) {
-          color = KEYPOINT_COLORS.shoulder;
-        } else if ([MOVENET_KEYPOINTS.LEFT_ELBOW, MOVENET_KEYPOINTS.RIGHT_ELBOW].includes(keypointIdx)) {
-          color = KEYPOINT_COLORS.elbow;
-        } else if ([MOVENET_KEYPOINTS.LEFT_HIP, MOVENET_KEYPOINTS.RIGHT_HIP].includes(keypointIdx)) {
-          color = KEYPOINT_COLORS.hip;
-        } else if ([MOVENET_KEYPOINTS.LEFT_KNEE, MOVENET_KEYPOINTS.RIGHT_KNEE].includes(keypointIdx)) {
-          color = KEYPOINT_COLORS.knee;
-        } else if ([MOVENET_KEYPOINTS.LEFT_ANKLE, MOVENET_KEYPOINTS.RIGHT_ANKLE].includes(keypointIdx)) {
-          color = KEYPOINT_COLORS.ankle;
-        }
+        // Use the getKeypointColor function for BlazePose keypoint coloring
+        const color = getKeypointColor(keypointIdx);
 
         // Draw keypoint
         ctx.beginPath();
@@ -1828,8 +2056,33 @@ function VideoAnalysis() {
             onChange={(e) => setVideoUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
             placeholder="Paste video URL..."
-            style={{ width: '150px', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fbbf24', fontSize: '0.85rem' }}
+            style={{ width: '225px', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fbbf24', fontSize: '0.85rem' }}
           />
+
+          {/* File info display */}
+          {videoSource && fileInfo.name && (
+            <div style={{
+              flex: 1,
+              padding: '0.35rem 0.5rem',
+              background: '#0f172a',
+              border: '1px solid #78350f',
+              borderRadius: '0.25rem',
+              color: '#a16207',
+              fontSize: '0.75rem',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: '150px'
+            }}>
+              <span style={{ color: '#fbbf24' }}>{fileInfo.name}</span>
+              <span style={{ marginLeft: '0.5rem', color: '#78350f' }}>|</span>
+              <span style={{ marginLeft: '0.5rem' }}>{formatFileSize(fileInfo.size)}</span>
+              <span style={{ marginLeft: '0.5rem', color: '#78350f' }}>|</span>
+              <span style={{ marginLeft: '0.5rem' }}>{getResolutionLabel(fileInfo.width, fileInfo.height)}</span>
+              <span style={{ marginLeft: '0.5rem', color: '#78350f' }}>|</span>
+              <span style={{ marginLeft: '0.5rem' }}>{fileInfo.fps} fps</span>
+            </div>
+          )}
 
           {/* AI Status indicator - inline */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1879,6 +2132,7 @@ function VideoAnalysis() {
               onMouseUp={handleCanvasMouseUp}
               onMouseLeave={handleCanvasMouseUp}
             >
+              {/* Video element with crop transform when applied */}
               <video
                 ref={videoRef}
                 src={videoSource}
@@ -1886,7 +2140,16 @@ function VideoAnalysis() {
                 onTimeUpdate={handleTimeUpdate}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
-                style={{
+                style={isCropApplied && !cropMode ? {
+                  // When crop is applied: scale and position to show only cropped region
+                  position: 'absolute',
+                  width: `${100 / (cropBounds.right - cropBounds.left)}%`,
+                  height: `${100 / (cropBounds.bottom - cropBounds.top)}%`,
+                  left: `${-cropBounds.left * 100 / (cropBounds.right - cropBounds.left)}%`,
+                  top: `${-cropBounds.top * 100 / (cropBounds.bottom - cropBounds.top)}%`,
+                  objectFit: 'contain',
+                  pointerEvents: 'none'
+                } : {
                   width: '100%',
                   height: '100%',
                   objectFit: 'contain',
@@ -1905,6 +2168,218 @@ function VideoAnalysis() {
                   pointerEvents: 'none'
                 }}
               />
+
+              {/* Crop Overlay UI */}
+              {cropMode && videoRenderDims.width > 0 && (
+                <div style={{
+                  position: 'absolute',
+                  top: `${videoRenderDims.offsetY}px`,
+                  left: `${videoRenderDims.offsetX}px`,
+                  width: `${videoRenderDims.width}px`,
+                  height: `${videoRenderDims.height}px`,
+                  pointerEvents: 'none'
+                }}>
+                  {/* Darkened areas outside crop region */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: `${cropBounds.top * 100}%`,
+                    background: 'rgba(0,0,0,0.6)',
+                    pointerEvents: 'none'
+                  }} />
+                  <div style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: `${(1 - cropBounds.bottom) * 100}%`,
+                    background: 'rgba(0,0,0,0.6)',
+                    pointerEvents: 'none'
+                  }} />
+                  <div style={{
+                    position: 'absolute',
+                    top: `${cropBounds.top * 100}%`,
+                    left: 0,
+                    width: `${cropBounds.left * 100}%`,
+                    height: `${(cropBounds.bottom - cropBounds.top) * 100}%`,
+                    background: 'rgba(0,0,0,0.6)',
+                    pointerEvents: 'none'
+                  }} />
+                  <div style={{
+                    position: 'absolute',
+                    top: `${cropBounds.top * 100}%`,
+                    right: 0,
+                    width: `${(1 - cropBounds.right) * 100}%`,
+                    height: `${(cropBounds.bottom - cropBounds.top) * 100}%`,
+                    background: 'rgba(0,0,0,0.6)',
+                    pointerEvents: 'none'
+                  }} />
+
+                  {/* Crop region border */}
+                  <div style={{
+                    position: 'absolute',
+                    top: `${cropBounds.top * 100}%`,
+                    left: `${cropBounds.left * 100}%`,
+                    width: `${(cropBounds.right - cropBounds.left) * 100}%`,
+                    height: `${(cropBounds.bottom - cropBounds.top) * 100}%`,
+                    border: '2px dashed #fbbf24',
+                    boxSizing: 'border-box',
+                    pointerEvents: 'none'
+                  }} />
+
+                  {/* Edge handles */}
+                  {/* Top edge */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('top', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `calc(${cropBounds.top * 100}% - 4px)`,
+                      left: `${cropBounds.left * 100}%`,
+                      width: `${(cropBounds.right - cropBounds.left) * 100}%`,
+                      height: '8px',
+                      cursor: 'ns-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+                  {/* Bottom edge */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('bottom', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `calc(${cropBounds.bottom * 100}% - 4px)`,
+                      left: `${cropBounds.left * 100}%`,
+                      width: `${(cropBounds.right - cropBounds.left) * 100}%`,
+                      height: '8px',
+                      cursor: 'ns-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+                  {/* Left edge */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('left', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `${cropBounds.top * 100}%`,
+                      left: `calc(${cropBounds.left * 100}% - 4px)`,
+                      width: '8px',
+                      height: `${(cropBounds.bottom - cropBounds.top) * 100}%`,
+                      cursor: 'ew-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+                  {/* Right edge */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('right', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `${cropBounds.top * 100}%`,
+                      left: `calc(${cropBounds.right * 100}% - 4px)`,
+                      width: '8px',
+                      height: `${(cropBounds.bottom - cropBounds.top) * 100}%`,
+                      cursor: 'ew-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+
+                  {/* Corner handles */}
+                  {/* Top-left */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('topLeft', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `calc(${cropBounds.top * 100}% - 6px)`,
+                      left: `calc(${cropBounds.left * 100}% - 6px)`,
+                      width: '12px',
+                      height: '12px',
+                      background: '#fbbf24',
+                      borderRadius: '2px',
+                      cursor: 'nwse-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+                  {/* Top-right */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('topRight', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `calc(${cropBounds.top * 100}% - 6px)`,
+                      left: `calc(${cropBounds.right * 100}% - 6px)`,
+                      width: '12px',
+                      height: '12px',
+                      background: '#fbbf24',
+                      borderRadius: '2px',
+                      cursor: 'nesw-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+                  {/* Bottom-left */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('bottomLeft', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `calc(${cropBounds.bottom * 100}% - 6px)`,
+                      left: `calc(${cropBounds.left * 100}% - 6px)`,
+                      width: '12px',
+                      height: '12px',
+                      background: '#fbbf24',
+                      borderRadius: '2px',
+                      cursor: 'nesw-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+                  {/* Bottom-right */}
+                  <div
+                    onMouseDown={(e) => handleCropDragStart('bottomRight', e)}
+                    style={{
+                      position: 'absolute',
+                      top: `calc(${cropBounds.bottom * 100}% - 6px)`,
+                      left: `calc(${cropBounds.right * 100}% - 6px)`,
+                      width: '12px',
+                      height: '12px',
+                      background: '#fbbf24',
+                      borderRadius: '2px',
+                      cursor: 'nwse-resize',
+                      pointerEvents: 'auto'
+                    }}
+                  />
+
+                  {/* Crop mode label */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '8px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: 'rgba(251, 191, 36, 0.9)',
+                    color: '#000',
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    fontWeight: '600',
+                    pointerEvents: 'none'
+                  }}>
+                    CROP MODE - Drag edges to select region
+                  </div>
+                </div>
+              )}
+
+              {/* Crop applied indicator */}
+              {isCropApplied && !cropMode && (
+                <div style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  background: 'rgba(16, 185, 129, 0.9)',
+                  color: '#fff',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '0.65rem',
+                  fontWeight: '500'
+                }}>
+                  CROPPED
+                </div>
+              )}
             </div>
 
             {/* Resize Handle */}
@@ -1947,182 +2422,241 @@ function VideoAnalysis() {
                   +1
                 </button>
 
-                <div style={{ flex: 1 }}>
-                  <input
-                    type="range"
-                    min={0}
-                    max={totalFrames - 1}
-                    value={currentFrame}
-                    onChange={(e) => seekToFrame(parseInt(e.target.value))}
-                    style={{ width: '100%', accentColor: '#ea580c' }}
-                  />
-                </div>
+                {/* Divider */}
+                <div style={{ width: '1px', height: '20px', background: '#78350f', margin: '0 0.25rem' }} />
 
-                <div style={{ fontSize: '0.8rem', color: '#fbbf24', minWidth: '100px', textAlign: 'right' }}>
-                  Frame {currentFrame} / {totalFrames}
-                </div>
-              </div>
-
-              <div style={{ fontSize: '0.75rem', color: '#a16207', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <span>Time: {currentTime.toFixed(2)}s</span>
-                  <span>Duration: {isTrimApplied ? effectiveDuration.toFixed(2) : duration.toFixed(2)}s</span>
-                  <span>FPS: {fps}</span>
-                </div>
-                {isTrimApplied && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: '#10b981' }}>Trimmed: {effectiveDuration.toFixed(2)}s ({totalFrames} frames)</span>
+                {/* Crop controls */}
+                {!cropMode ? (
+                  <button
+                    onClick={toggleCropMode}
+                    style={{ padding: '0.3rem 0.6rem', background: isCropApplied ? '#166534' : '#78350f', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
+                  >
+                    {isCropApplied ? 'Re-Crop' : 'Crop'}
+                  </button>
+                ) : (
+                  <>
                     <button
-                      onClick={resetTrim}
-                      style={{ padding: '0.2rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.7rem' }}
+                      onClick={applyCrop}
+                      style={{ padding: '0.3rem 0.6rem', background: '#166534', border: '1px solid #22c55e', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
                     >
-                      Reset
+                      Apply Crop
                     </button>
-                  </div>
+                    <button
+                      onClick={() => setCropMode(false)}
+                      style={{ padding: '0.3rem 0.6rem', background: '#78350f', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.75rem' }}
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
-              </div>
+                {isCropApplied && !cropMode && (
+                  <button
+                    onClick={resetCrop}
+                    style={{ padding: '0.3rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.7rem' }}
+                  >
+                    Reset Crop
+                  </button>
+                )}
 
-              {/* Trim Sliders - only show when NOT trimmed */}
-              {!isTrimApplied ? (
-                <div style={{ marginTop: '0.5rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.25rem', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Trim Range</span>
-                    <span style={{ color: '#fbbf24' }}>
-                      {(trimStart * duration).toFixed(2)}s — {(trimEnd * duration).toFixed(2)}s
-                    </span>
-                  </div>
+                <div style={{ flex: 1, position: 'relative', maxWidth: '60%' }}>
+                  {/* Main playback slider container with trim handles */}
                   <div
                     ref={trimContainerRef}
-                    style={{ position: 'relative', height: '24px', background: '#0f172a', borderRadius: '4px', cursor: 'pointer' }}
+                    style={{ position: 'relative', height: '40px', paddingTop: '8px' }}
                   >
-                    {/* Inactive regions (trimmed out) */}
+                    {/* Main slider track background */}
                     <div style={{
                       position: 'absolute',
+                      top: '8px',
                       left: 0,
-                      top: 0,
-                      width: `${trimStart * 100}%`,
-                      height: '100%',
-                      background: 'rgba(120, 53, 15, 0.5)',
-                      borderRadius: '4px 0 0 4px'
-                    }} />
-                    <div style={{
-                      position: 'absolute',
                       right: 0,
-                      top: 0,
-                      width: `${(1 - trimEnd) * 100}%`,
-                      height: '100%',
-                      background: 'rgba(120, 53, 15, 0.5)',
-                      borderRadius: '0 4px 4px 0'
+                      height: '16px',
+                      background: '#0f172a',
+                      borderRadius: '4px'
                     }} />
 
-                    {/* Active region */}
-                    <div style={{
-                      position: 'absolute',
-                      left: `${trimStart * 100}%`,
-                      top: 0,
-                      width: `${(trimEnd - trimStart) * 100}%`,
-                      height: '100%',
-                      background: 'rgba(234, 88, 12, 0.3)',
-                      borderTop: '2px solid #ea580c',
-                      borderBottom: '2px solid #ea580c'
-                    }} />
+                    {/* Trimmed out regions (darker) */}
+                    {(trimStart > 0 || trimEnd < 1) && (
+                      <>
+                        <div style={{
+                          position: 'absolute',
+                          top: '8px',
+                          left: 0,
+                          width: `${trimStart * 100}%`,
+                          height: '16px',
+                          background: 'rgba(0, 0, 0, 0.5)',
+                          borderRadius: '4px 0 0 4px',
+                          pointerEvents: 'none'
+                        }} />
+                        <div style={{
+                          position: 'absolute',
+                          top: '8px',
+                          right: 0,
+                          width: `${(1 - trimEnd) * 100}%`,
+                          height: '16px',
+                          background: 'rgba(0, 0, 0, 0.5)',
+                          borderRadius: '0 4px 4px 0',
+                          pointerEvents: 'none'
+                        }} />
+                      </>
+                    )}
 
-                    {/* Current position indicator */}
-                    <div style={{
-                      position: 'absolute',
-                      left: `${(currentTime / duration) * 100}%`,
-                      top: 0,
-                      width: '2px',
-                      height: '100%',
-                      background: '#fbbf24',
-                      transform: 'translateX(-50%)',
-                      zIndex: 1
-                    }} />
+                    {/* Active region highlight */}
+                    {(trimStart > 0 || trimEnd < 1) && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '8px',
+                        left: `${trimStart * 100}%`,
+                        width: `${(trimEnd - trimStart) * 100}%`,
+                        height: '16px',
+                        background: 'rgba(234, 88, 12, 0.2)',
+                        borderTop: '2px solid #ea580c',
+                        borderBottom: '2px solid #ea580c',
+                        pointerEvents: 'none'
+                      }} />
+                    )}
 
-                    {/* Start handle */}
+                    {/* Playback position slider */}
+                    <input
+                      type="range"
+                      min={0}
+                      max={totalFrames - 1}
+                      value={currentFrame}
+                      onChange={(e) => seekToFrame(parseInt(e.target.value))}
+                      style={{
+                        position: 'absolute',
+                        top: '8px',
+                        left: 0,
+                        width: '100%',
+                        height: '16px',
+                        accentColor: '#ea580c',
+                        background: 'transparent',
+                        cursor: 'pointer'
+                      }}
+                    />
+
+                    {/* Trim start handle - vertical bar with circle */}
                     <div
                       onMouseDown={(e) => handleTrimDragStart('start', e)}
                       style={{
                         position: 'absolute',
                         left: `${trimStart * 100}%`,
-                        top: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        width: '14px',
-                        height: '24px',
-                        background: isDraggingTrim === 'start' ? '#fbbf24' : '#ea580c',
-                        borderRadius: '3px',
+                        top: '4px',
+                        transform: 'translateX(-50%)',
                         cursor: 'ew-resize',
-                        border: '2px solid #fbbf24',
-                        zIndex: 2,
+                        zIndex: 10,
                         display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
+                        flexDirection: 'column',
+                        alignItems: 'center'
                       }}
                     >
-                      <div style={{ width: '2px', height: '12px', background: '#fbbf24', borderRadius: '1px' }} />
+                      {/* Vertical bar */}
+                      <div style={{
+                        width: '3px',
+                        height: '24px',
+                        background: isDraggingTrim === 'start' ? '#fbbf24' : '#ea580c',
+                        borderRadius: '1px'
+                      }} />
+                      {/* Circle handle */}
+                      <div style={{
+                        width: '12px',
+                        height: '12px',
+                        background: isDraggingTrim === 'start' ? '#fbbf24' : '#ea580c',
+                        border: '2px solid #fbbf24',
+                        borderRadius: '50%',
+                        marginTop: '-2px'
+                      }} />
                     </div>
 
-                    {/* End handle */}
+                    {/* Trim end handle - vertical bar with circle */}
                     <div
                       onMouseDown={(e) => handleTrimDragStart('end', e)}
                       style={{
                         position: 'absolute',
                         left: `${trimEnd * 100}%`,
-                        top: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        width: '14px',
-                        height: '24px',
-                        background: isDraggingTrim === 'end' ? '#fbbf24' : '#ea580c',
-                        borderRadius: '3px',
+                        top: '4px',
+                        transform: 'translateX(-50%)',
                         cursor: 'ew-resize',
-                        border: '2px solid #fbbf24',
-                        zIndex: 2,
+                        zIndex: 10,
                         display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
+                        flexDirection: 'column',
+                        alignItems: 'center'
                       }}
                     >
-                      <div style={{ width: '2px', height: '12px', background: '#fbbf24', borderRadius: '1px' }} />
+                      {/* Vertical bar */}
+                      <div style={{
+                        width: '3px',
+                        height: '24px',
+                        background: isDraggingTrim === 'end' ? '#fbbf24' : '#ea580c',
+                        borderRadius: '1px'
+                      }} />
+                      {/* Circle handle */}
+                      <div style={{
+                        width: '12px',
+                        height: '12px',
+                        background: isDraggingTrim === 'end' ? '#fbbf24' : '#ea580c',
+                        border: '2px solid #fbbf24',
+                        borderRadius: '50%',
+                        marginTop: '-2px'
+                      }} />
                     </div>
                   </div>
 
-                  {/* Apply Trim button */}
+                  {/* Trim button and info - inline below slider */}
                   {(trimStart > 0 || trimEnd < 1) && (
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
+                      <span style={{ fontSize: '0.65rem', color: '#a16207' }}>
+                        {(trimStart * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s — {(trimEnd * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s
+                      </span>
                       <button
                         onClick={applyTrim}
                         style={{
-                          flex: 1,
-                          padding: '0.35rem',
+                          padding: '0.15rem 0.4rem',
                           background: '#ea580c',
                           border: 'none',
                           borderRadius: '0.25rem',
                           color: '#fef3c7',
                           cursor: 'pointer',
-                          fontSize: '0.75rem',
+                          fontSize: '0.65rem',
                           fontWeight: '500'
                         }}
                       >
-                        Apply Trim
+                        Trim
                       </button>
                       <button
                         onClick={() => { setTrimStart(0); setTrimEnd(1); }}
                         style={{
-                          padding: '0.35rem 0.75rem',
-                          background: '#78350f',
+                          padding: '0.15rem 0.3rem',
+                          background: 'transparent',
                           border: 'none',
-                          borderRadius: '0.25rem',
-                          color: '#fbbf24',
+                          color: '#78350f',
                           cursor: 'pointer',
-                          fontSize: '0.75rem'
+                          fontSize: '0.65rem'
                         }}
                       >
-                        Cancel
+                        Reset
                       </button>
                     </div>
                   )}
                 </div>
-              ) : null}
+
+                <div style={{ fontSize: '0.75rem', color: '#a16207', display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }}>
+                  <span style={{ color: '#fbbf24' }}>F{currentFrame}/{totalFrames}</span>
+                  <span>Time: {currentTime.toFixed(2)}s</span>
+                  <span>Dur: {isTrimApplied ? effectiveDuration.toFixed(2) : duration.toFixed(2)}s</span>
+                  {isCropApplied && (
+                    <span style={{ color: '#10b981' }}>Crop: {Math.round((cropBounds.right - cropBounds.left) * 100)}%</span>
+                  )}
+                  {isTrimApplied && (
+                    <button
+                      onClick={resetTrim}
+                      style={{ padding: '0.15rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem' }}
+                    >
+                      Reset Trim
+                    </button>
+                  )}
+                </div>
+              </div>
 
               {/* Confidence Heatmap Timeline */}
               {frameConfidences.length > 0 && (
@@ -2183,122 +2717,128 @@ function VideoAnalysis() {
             paddingBottom: '2rem'
           }}>
             {/* Combined Analysis Setup */}
-            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: isCalibrated ? '4px solid #10b981' : '4px solid #fbbf24' }}>
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: '4px solid #fbbf24' }}>
 
-              {/* Tracking Profile */}
+              {/* Tracking Profile + Event side-by-side */}
               <div style={{ marginBottom: '0.75rem' }}>
-                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Tracking Profile</label>
-                <select
-                  value={activeProfile}
-                  onChange={(e) => setActiveProfile(e.target.value)}
-                  style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
-                >
-                  {Object.entries(TRACKING_PROFILES).map(([key, profile]) => (
-                    <option key={key} value={key}>{profile.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Event */}
-              <div style={{ marginBottom: '0.75rem' }}>
-                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Event</label>
-                <select
-                  value={selectedDrill}
-                  onChange={(e) => handleDrillSelect(e.target.value)}
-                  style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
-                >
-                  {Object.entries(DRILL_TEMPLATES).map(([key, drill]) => (
-                    <option key={key} value={key}>{drill.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Calibration */}
-              <div style={{ marginBottom: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
-                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Calibration</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <input
-                    type="number"
-                    value={calibrationDistance}
-                    onChange={(e) => setCalibrationDistance(e.target.value)}
-                    style={{ width: '60px', padding: '0.3rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
-                    placeholder="10"
-                  />
-                  <span style={{ fontSize: '0.75rem', color: '#fbbf24' }}>yards</span>
-
-                  {!isSettingCalibration && !isCalibrated ? (
-                    <button
-                      onClick={() => { setIsSettingCalibration(true); setCalibrationMarkers([]); }}
-                      style={{ padding: '0.25rem 0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
-                    >
-                      Set Calibration
-                    </button>
-                  ) : !isCalibrated ? (
-                    <button
-                      onClick={() => { calculateCalibration(); setIsSettingCalibration(false); }}
-                      disabled={calibrationMarkers.length < 2 || !calibrationDistance}
-                      style={{ padding: '0.25rem 0.5rem', background: calibrationMarkers.length >= 2 && calibrationDistance ? '#10b981' : '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed', fontSize: '0.75rem' }}
-                    >
-                      Calibrate
-                    </button>
-                  ) : (
-                    <span style={{ fontSize: '0.75rem', color: '#10b981' }}>Calibrated ({pixelsPerYard?.toFixed(0)} px/yd)</span>
-                  )}
-
-                  {(isSettingCalibration || isCalibrated) && (
-                    <button
-                      onClick={() => { setCalibrationMarkers([]); setIsCalibrated(false); setIsSettingCalibration(false); }}
-                      style={{ padding: '0.25rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.75rem' }}
-                    >
-                      Reset
-                    </button>
-                  )}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                  <label style={{ fontSize: '0.75rem', color: '#fbbf24' }}>Tracking Profile</label>
+                  <label style={{ fontSize: '0.75rem', color: '#fbbf24' }}>Event</label>
                 </div>
-                {isSettingCalibration && !isCalibrated && (
-                  <div style={{ fontSize: '0.7rem', color: '#fbbf24' }}>
-                    Click video to place points ({calibrationMarkers.length}/2)
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <select
+                    value={activeProfile}
+                    onChange={(e) => setActiveProfile(e.target.value)}
+                    style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.75rem' }}
+                  >
+                    {Object.entries(TRACKING_PROFILES).map(([key, profile]) => (
+                      <option key={key} value={key}>{profile.name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedDrill}
+                    onChange={(e) => handleDrillSelect(e.target.value)}
+                    style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.75rem' }}
+                  >
+                    {Object.entries(DRILL_TEMPLATES).map(([key, drill]) => (
+                      <option key={key} value={key}>{drill.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Athlete Selection + Confidence Threshold side-by-side */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
+                {/* Athlete Selection */}
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block', lineHeight: '1.2' }}>
+                    Athlete<br/>Selection
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <button
+                      onClick={() => { setAthleteSelectionMode(true); setSelectedAthleteBox(null); }}
+                      style={{ padding: '0.2rem 0.4rem', background: athleteSelectionMode ? '#fbbf24' : '#78350f', border: 'none', borderRadius: '0.25rem', color: athleteSelectionMode ? '#000' : '#fef3c7', cursor: 'pointer', fontSize: '0.7rem' }}
+                    >
+                      {athleteSelectionMode ? 'Click...' : selectedAthleteBox ? 'Selected' : 'Select'}
+                    </button>
+                    {selectedAthleteBox && (
+                      <button
+                        onClick={() => setSelectedAthleteBox(null)}
+                        style={{ padding: '0.2rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem' }}
+                      >
+                        Clear
+                      </button>
+                    )}
                   </div>
+                </div>
+
+                {/* Confidence Threshold */}
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block', lineHeight: '1.2' }}>
+                    Confidence<br/>Threshold
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="0.7"
+                      step="0.05"
+                      value={confidenceThreshold}
+                      onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
+                      style={{ flex: 1, maxWidth: '80px' }}
+                    />
+                    <span style={{ fontSize: '0.7rem', color: '#fbbf24' }}>{(confidenceThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Calibration Card */}
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: isCalibrated ? '4px solid #10b981' : '4px solid #fbbf24' }}>
+              <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.35rem', display: 'block' }}>Calibration</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input
+                  type="number"
+                  value={calibrationDistance}
+                  onChange={(e) => setCalibrationDistance(e.target.value)}
+                  style={{ width: '50px', padding: '0.3rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.75rem' }}
+                  placeholder="10"
+                />
+                <span style={{ fontSize: '0.7rem', color: '#fbbf24' }}>yards</span>
+
+                {!isSettingCalibration && !isCalibrated ? (
+                  <button
+                    onClick={() => { setIsSettingCalibration(true); setCalibrationMarkers([]); }}
+                    style={{ padding: '0.25rem 0.4rem', background: '#78350f', border: '1px solid #fbbf24', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem' }}
+                  >
+                    Set
+                  </button>
+                ) : !isCalibrated ? (
+                  <button
+                    onClick={() => { calculateCalibration(); setIsSettingCalibration(false); }}
+                    disabled={calibrationMarkers.length < 2 || !calibrationDistance}
+                    style={{ padding: '0.25rem 0.4rem', background: calibrationMarkers.length >= 2 && calibrationDistance ? '#10b981' : '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed', fontSize: '0.7rem' }}
+                  >
+                    Calibrate
+                  </button>
+                ) : (
+                  <span style={{ fontSize: '0.7rem', color: '#10b981' }}>✓ {pixelsPerYard?.toFixed(0)} px/yd</span>
+                )}
+
+                {(isSettingCalibration || isCalibrated) && (
+                  <button
+                    onClick={() => { setCalibrationMarkers([]); setIsCalibrated(false); setIsSettingCalibration(false); }}
+                    style={{ padding: '0.25rem 0.4rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.7rem' }}
+                  >
+                    Reset
+                  </button>
                 )}
               </div>
-
-              {/* Athlete Selection */}
-              <div style={{ marginBottom: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
-                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Athlete Selection</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <button
-                    onClick={() => { setAthleteSelectionMode(true); setSelectedAthleteBox(null); }}
-                    style={{ padding: '0.25rem 0.5rem', background: athleteSelectionMode ? '#fbbf24' : '#78350f', border: 'none', borderRadius: '0.25rem', color: athleteSelectionMode ? '#000' : '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
-                  >
-                    {athleteSelectionMode ? 'Click athlete...' : selectedAthleteBox ? 'Selected' : 'Select'}
-                  </button>
-                  {selectedAthleteBox && (
-                    <button
-                      onClick={() => setSelectedAthleteBox(null)}
-                      style={{ padding: '0.25rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.75rem' }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                  <span style={{ fontSize: '0.7rem', color: '#a16207' }}>For crowded scenes</span>
+              {isSettingCalibration && !isCalibrated && (
+                <div style={{ fontSize: '0.65rem', color: '#fbbf24', marginTop: '0.25rem' }}>
+                  Click video to place points ({calibrationMarkers.length}/2)
                 </div>
-              </div>
-
-              {/* Confidence Threshold */}
-              <div style={{ paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
-                <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block' }}>Confidence Threshold</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="0.7"
-                    step="0.05"
-                    value={confidenceThreshold}
-                    onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
-                    style={{ flex: 1, maxWidth: '150px' }}
-                  />
-                  <span style={{ fontSize: '0.8rem', color: '#fbbf24' }}>{(confidenceThreshold * 100).toFixed(0)}%</span>
-                </div>
-              </div>
+              )}
             </div>
 
             {/* Process Button */}
@@ -2331,8 +2871,8 @@ function VideoAnalysis() {
             )}
 
             {/* Manual Tracking Fallback */}
-            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: manualTrackingMode ? '4px solid #fb923c' : '4px solid #78350f' }}>
-              <h3 style={{ fontSize: '0.85rem', color: '#fb923c', marginBottom: '0.35rem' }}>Manual Tracking</h3>
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: manualTrackingMode ? '4px solid #fbbf24' : '4px solid #78350f' }}>
+              <h3 style={{ fontSize: '0.85rem', color: '#fbbf24', marginBottom: '0.35rem' }}>Manual Tracking</h3>
               <p style={{ fontSize: '0.75rem', color: '#78350f', marginBottom: '0.35rem' }}>
                 If AI tracking fails, manually place center-of-mass points
               </p>
@@ -2341,10 +2881,10 @@ function VideoAnalysis() {
                 style={{
                   width: '100%',
                   padding: '0.5rem',
-                  background: manualTrackingMode ? '#fb923c' : '#78350f',
+                  background: manualTrackingMode ? '#fbbf24' : '#78350f',
                   border: 'none',
                   borderRadius: '0.375rem',
-                  color: '#fef3c7',
+                  color: manualTrackingMode ? '#000' : '#fef3c7',
                   cursor: 'pointer',
                   fontWeight: '500'
                 }}
@@ -2486,161 +3026,182 @@ function VideoAnalysis() {
         )}
       </div>
 
-      {/* Results Section */}
-      {analysisResults && (
-        <div style={{ marginTop: '0.75rem', marginBottom: '1rem', background: '#1e293b', padding: '0.5rem', borderRadius: '0.25rem', borderLeft: '3px solid #fb923c' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h3 style={{ fontSize: '0.85rem', color: '#fb923c' }}>Results</h3>
+      {/* Results Section - Always visible with placeholders */}
+      <div style={{ marginTop: '0.75rem', marginBottom: '1rem', background: '#1e293b', padding: '0.5rem', borderRadius: '0.25rem', borderLeft: analysisResults ? '3px solid #fb923c' : '3px solid #78350f' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <h3 style={{ fontSize: '0.85rem', color: analysisResults ? '#fb923c' : '#78350f' }}>Results</h3>
 
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              {analysisResults.hasTimeOverrides && (
-                <span style={{ fontSize: '0.65rem', background: '#fbbf24', color: '#000', padding: '0.15rem 0.35rem', borderRadius: '0.2rem' }}>
-                  Field Times
-                </span>
-              )}
-              {primaryAthlete && (
-                <button
-                  onClick={saveToAthlete}
-                  style={{ padding: '0.25rem 0.5rem', background: '#10b981', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.7rem' }}
-                >
-                  Save to {primaryAthlete.firstName}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Result Tabs */}
-          <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-            {['summary', 'speed', 'acceleration', 'power', ...(enableBiomechanics && biomechanicsResults ? ['biomechanics'] : []), 'data'].map(tab => (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {analysisResults?.hasTimeOverrides && (
+              <span style={{ fontSize: '0.65rem', background: '#fbbf24', color: '#000', padding: '0.15rem 0.35rem', borderRadius: '0.2rem' }}>
+                Field Times
+              </span>
+            )}
+            {primaryAthlete && analysisResults && (
               <button
-                key={tab}
-                onClick={() => setActiveResultTab(tab)}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: activeResultTab === tab ? '#5b21b6' : '#78350f',
-                  border: 'none',
-                  borderRadius: '0.25rem',
-                  color: activeResultTab === tab ? '#c4b5fd' : '#9ca3af',
-                  cursor: 'pointer',
-                  fontSize: '0.7rem',
-                  fontWeight: activeResultTab === tab ? '600' : '400',
-                  textTransform: 'capitalize'
-                }}
+                onClick={saveToAthlete}
+                style={{ padding: '0.25rem 0.5rem', background: '#10b981', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.65rem' }}
               >
-                {tab}
+                Save to {new Date().toISOString().split('T')[0]} {primaryAthlete.lastName}_{primaryAthlete.firstName}
               </button>
-            ))}
+            )}
           </div>
+        </div>
 
-          {/* Summary Tab */}
-          {activeResultTab === 'summary' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: '0.5rem' }}>
-              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.6rem', color: '#ea580c' }}>Max Speed</div>
-                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
-                  {analysisResults.summary.maxVelocityMph.toFixed(1)}
-                </div>
-                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>MPH</div>
+        {/* Result Tabs */}
+        <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+          {['summary', 'speed', 'acceleration', 'power', ...(enableBiomechanics && biomechanicsResults ? ['biomechanics'] : []), 'data'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveResultTab(tab)}
+              style={{
+                padding: '0.25rem 0.5rem',
+                background: activeResultTab === tab ? '#5b21b6' : '#78350f',
+                border: 'none',
+                borderRadius: '0.25rem',
+                color: activeResultTab === tab ? '#c4b5fd' : '#9ca3af',
+                cursor: 'pointer',
+                fontSize: '0.7rem',
+                fontWeight: activeResultTab === tab ? '600' : '400',
+                textTransform: 'capitalize',
+                opacity: analysisResults ? 1 : 0.6
+              }}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Summary Tab */}
+        {activeResultTab === 'summary' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: '0.5rem' }}>
+            <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.6rem', color: '#ea580c' }}>Max Speed</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: analysisResults ? '#fbbf24' : '#78350f' }}>
+                {analysisResults ? analysisResults.summary.maxVelocityMph.toFixed(1) : '-'}
               </div>
+              <div style={{ fontSize: '0.55rem', color: '#78350f' }}>MPH</div>
+            </div>
 
-              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.6rem', color: '#fbbf24' }}>Peak Accel</div>
-                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
-                  {analysisResults.summary.peakAccelerationG.toFixed(2)}
-                </div>
-                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>g</div>
+            <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.6rem', color: '#fbbf24' }}>Peak Accel</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: analysisResults ? '#fbbf24' : '#78350f' }}>
+                {analysisResults ? analysisResults.summary.peakAccelerationG.toFixed(2) : '-'}
               </div>
+              <div style={{ fontSize: '0.55rem', color: '#78350f' }}>g</div>
+            </div>
 
-              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.6rem', color: '#dc2626' }}>Max Power</div>
-                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
-                  {analysisResults.summary.maxPower ? analysisResults.summary.maxPower.toFixed(0) : '-'}
-                </div>
-                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>W</div>
+            <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.6rem', color: '#dc2626' }}>Max Power</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: analysisResults ? '#fbbf24' : '#78350f' }}>
+                {analysisResults?.summary.maxPower ? analysisResults.summary.maxPower.toFixed(0) : '-'}
               </div>
+              <div style={{ fontSize: '0.55rem', color: '#78350f' }}>W</div>
+            </div>
 
-              <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.6rem', color: '#10b981' }}>Time</div>
-                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fbbf24' }}>
-                  {analysisResults.summary.totalTime.toFixed(2)}
-                </div>
-                <div style={{ fontSize: '0.55rem', color: '#78350f' }}>sec</div>
+            <div style={{ background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.6rem', color: '#10b981' }}>Time</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: analysisResults ? '#fbbf24' : '#78350f' }}>
+                {analysisResults ? analysisResults.summary.totalTime.toFixed(2) : '-'}
               </div>
+              <div style={{ fontSize: '0.55rem', color: '#78350f' }}>sec</div>
+            </div>
 
-              {/* Split Times */}
-              <div style={{ gridColumn: 'span 2', background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem' }}>
-                <div style={{ fontSize: '0.6rem', color: '#10b981', marginBottom: '0.25rem' }}>Splits</div>
-                <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: '0.25rem' }}>
-                  {[10, 20, 30, 40].map(yard => (
-                    <div key={yard} style={{ textAlign: 'center', minWidth: '40px' }}>
-                      <div style={{ fontSize: '0.55rem', color: '#78350f' }}>{yard}yd</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#fbbf24' }}>
-                        {analysisResults.summary.splits[yard] ? `${analysisResults.summary.splits[yard].toFixed(2)}s` : '-'}
-                      </div>
+            {/* Split Times */}
+            <div style={{ gridColumn: 'span 2', background: '#0f172a', padding: '0.4rem', borderRadius: '0.25rem' }}>
+              <div style={{ fontSize: '0.6rem', color: '#10b981', marginBottom: '0.25rem' }}>Splits</div>
+              <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: '0.25rem' }}>
+                {[10, 20, 30, 40].map(yard => (
+                  <div key={yard} style={{ textAlign: 'center', minWidth: '40px' }}>
+                    <div style={{ fontSize: '0.55rem', color: '#78350f' }}>{yard}yd</div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: '600', color: analysisResults ? '#fbbf24' : '#78350f' }}>
+                      {analysisResults?.summary.splits[yard] ? `${analysisResults.summary.splits[yard].toFixed(2)}s` : '-'}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Speed Chart */}
-          {activeResultTab === 'speed' && (
-            <div style={{ height: '200px' }}>
+        {/* Speed Chart */}
+        {activeResultTab === 'speed' && (
+          <div style={{ height: '200px' }}>
+            {analysisResults ? (
               <canvas ref={speedChartRef} />
-            </div>
-          )}
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
+                Analyze video to see speed graph
+              </div>
+            )}
+          </div>
+        )}
 
-          {/* Acceleration Chart */}
-          {activeResultTab === 'acceleration' && (
-            <div style={{ height: '200px' }}>
+        {/* Acceleration Chart */}
+        {activeResultTab === 'acceleration' && (
+          <div style={{ height: '200px' }}>
+            {analysisResults ? (
               <canvas ref={accelChartRef} />
-            </div>
-          )}
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
+                Analyze video to see acceleration graph
+              </div>
+            )}
+          </div>
+        )}
 
-          {/* Power Chart */}
-          {activeResultTab === 'power' && (
-            <div style={{ height: '200px' }}>
-              {getEffectiveWeight() ? (
-                <canvas ref={powerChartRef} />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
-                  Select athlete or enter weight for power
+        {/* Power Chart */}
+        {activeResultTab === 'power' && (
+          <div style={{ height: '200px' }}>
+            {analysisResults && getEffectiveWeight() ? (
+              <canvas ref={powerChartRef} />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
+                {analysisResults ? 'Select athlete or enter weight for power' : 'Analyze video to see power graph'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Biomechanics Charts */}
+        {activeResultTab === 'biomechanics' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            {biomechanicsResults ? (
+              <>
+                <div style={{ height: '180px' }}>
+                  <canvas ref={spineAngleChartRef} />
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* Biomechanics Charts */}
-          {activeResultTab === 'biomechanics' && biomechanicsResults && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-              <div style={{ height: '180px' }}>
-                <canvas ref={spineAngleChartRef} />
+                <div style={{ height: '180px' }}>
+                  <canvas ref={shinAngleChartRef} />
+                </div>
+              </>
+            ) : (
+              <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '180px', color: '#78350f', fontSize: '0.8rem' }}>
+                Enable biomechanics and analyze video
               </div>
-              <div style={{ height: '180px' }}>
-                <canvas ref={shinAngleChartRef} />
-              </div>
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
-          {/* Data Table */}
-          {activeResultTab === 'data' && (
-            <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
-                <thead>
-                  <tr style={{ background: '#0f172a', position: 'sticky', top: 0 }}>
-                    <th style={{ padding: '0.3rem', textAlign: 'left', color: '#a16207', borderBottom: '1px solid #78350f' }}>Frame</th>
-                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Time</th>
-                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Pos (yd)</th>
-                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>MPH</th>
-                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Accel (g)</th>
-                    {getEffectiveWeight() && (
-                      <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Power</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {analysisResults.frames.filter((_, i) => i % 3 === 0).map((frame) => (
+        {/* Data Table */}
+        {activeResultTab === 'data' && (
+          <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+              <thead>
+                <tr style={{ background: '#0f172a', position: 'sticky', top: 0 }}>
+                  <th style={{ padding: '0.3rem', textAlign: 'left', color: '#a16207', borderBottom: '1px solid #78350f' }}>Frame</th>
+                  <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Time</th>
+                  <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Pos (yd)</th>
+                  <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>MPH</th>
+                  <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Accel (g)</th>
+                  {getEffectiveWeight() && (
+                    <th style={{ padding: '0.3rem', textAlign: 'right', color: '#a16207', borderBottom: '1px solid #78350f' }}>Power</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {analysisResults ? (
+                  analysisResults.frames.filter((_, i) => i % 3 === 0).map((frame) => (
                     <tr key={frame.frame} style={{ borderBottom: '1px solid #1e293b' }}>
                       <td style={{ padding: '0.25rem', color: '#78350f' }}>{frame.frame}</td>
                       <td style={{ padding: '0.25rem', textAlign: 'right', color: '#fbbf24' }}>{frame.time.toFixed(2)}</td>
@@ -2653,13 +3214,19 @@ function VideoAnalysis() {
                         <td style={{ padding: '0.25rem', textAlign: 'right', color: '#dc2626' }}>{frame.power?.toFixed(0) || '-'}</td>
                       )}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="5" style={{ padding: '1rem', textAlign: 'center', color: '#78350f' }}>
+                      Analyze video to see data table
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Recording Mode UI */}
       {isRecordingMode && (

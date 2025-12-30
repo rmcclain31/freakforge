@@ -1,6 +1,7 @@
 /**
  * Pose Detection Utility
- * TensorFlow.js + MoveNet wrapper for human pose estimation
+ * TensorFlow.js + BlazePose for human pose estimation
+ * BlazePose provides 33 keypoints with better accuracy for athletic analysis
  */
 
 import * as tf from '@tensorflow/tfjs';
@@ -11,13 +12,15 @@ import { TRACKING_PROFILES, calculateCenterOfMass, calculateHeadPosition, calcul
 let detector = null;
 let isInitializing = false;
 let initPromise = null;
+let currentModel = null;
 
 /**
- * Initialize the MoveNet pose detector
+ * Initialize the BlazePose detector
+ * @param {string} modelType - 'lite', 'full', or 'heavy' (default: 'full')
  * @returns {Promise<boolean>} Success status
  */
-export async function initializePoseDetector() {
-  if (detector) {
+export async function initializePoseDetector(modelType = 'full') {
+  if (detector && currentModel === modelType) {
     return true;
   }
 
@@ -39,16 +42,18 @@ export async function initializePoseDetector() {
 
       console.log('TensorFlow.js backend:', tf.getBackend());
 
-      // Create MoveNet detector (Lightning is faster, Thunder is more accurate)
-      const model = poseDetection.SupportedModels.MoveNet;
+      // Create BlazePose detector
+      // lite = fastest, full = balanced, heavy = most accurate
+      const model = poseDetection.SupportedModels.BlazePose;
       const detectorConfig = {
-        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+        runtime: 'tfjs',
         enableSmoothing: true,
-        minPoseScore: 0.25
+        modelType: modelType // 'lite', 'full', or 'heavy'
       };
 
       detector = await poseDetection.createDetector(model, detectorConfig);
-      console.log('MoveNet detector initialized');
+      currentModel = modelType;
+      console.log(`BlazePose detector initialized (${modelType} model)`);
 
       isInitializing = false;
       return true;
@@ -67,6 +72,13 @@ export async function initializePoseDetector() {
  */
 export function isDetectorReady() {
   return detector !== null;
+}
+
+/**
+ * Get current model type
+ */
+export function getCurrentModel() {
+  return currentModel;
 }
 
 /**
@@ -141,7 +153,8 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
     startTime = 0,
     endTime = null,
     confidenceThreshold = 0.3,
-    athleteRegion = null
+    athleteRegion = null,
+    cropRegion = null // { cropX, cropY, cropWidth, cropHeight }
   } = options;
 
   const profile = TRACKING_PROFILES[profileId];
@@ -157,9 +170,15 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
   let prevKeypoints = null;
 
   // Create offscreen canvas for frame extraction
+  // If crop is applied, canvas size is the cropped region size
   const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  if (cropRegion) {
+    canvas.width = cropRegion.cropWidth;
+    canvas.height = cropRegion.cropHeight;
+  } else {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
   const ctx = canvas.getContext('2d');
 
   for (let i = 0; i < totalFrames; i++) {
@@ -175,8 +194,17 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
     video.currentTime = time;
     await waitForSeek(video);
 
-    // Draw frame to canvas
-    ctx.drawImage(video, 0, 0);
+    // Draw frame to canvas (with crop if specified)
+    if (cropRegion) {
+      // Draw only the cropped region, scaled to fill the canvas
+      ctx.drawImage(
+        video,
+        cropRegion.cropX, cropRegion.cropY, cropRegion.cropWidth, cropRegion.cropHeight, // source
+        0, 0, cropRegion.cropWidth, cropRegion.cropHeight // destination
+      );
+    } else {
+      ctx.drawImage(video, 0, 0);
+    }
 
     // Detect pose
     const poseResult = await detectPose(canvas);
@@ -206,6 +234,22 @@ export async function processVideo(video, options = {}, onProgress = null, onCan
             Object.entries(keypoints).map(([k, v]) => [k, { ...v, score: v.score * 0.5 }])
           );
         }
+      }
+
+      // If crop is applied, offset keypoints back to full video coordinates
+      // This ensures calibration (in full video coords) matches keypoints
+      if (cropRegion) {
+        const offsetKeypoints = {};
+        Object.entries(filteredByRegion).forEach(([k, v]) => {
+          if (v) {
+            offsetKeypoints[k] = {
+              ...v,
+              x: v.x + cropRegion.cropX,
+              y: v.y + cropRegion.cropY
+            };
+          }
+        });
+        filteredByRegion = offsetKeypoints;
       }
 
       // Filter to profile keypoints only, applying confidence threshold

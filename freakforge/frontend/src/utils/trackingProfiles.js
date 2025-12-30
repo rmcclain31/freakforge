@@ -1,9 +1,47 @@
 /**
  * Tracking Profiles Configuration
  * Defines keypoints, metrics, and angles for different event types
+ * Updated for BlazePose (33 keypoints) for better athletic analysis
  */
 
-// MoveNet keypoint indices reference
+// BlazePose keypoint indices (33 keypoints)
+export const BLAZEPOSE_KEYPOINTS = {
+  NOSE: 0,
+  LEFT_EYE_INNER: 1,
+  LEFT_EYE: 2,
+  LEFT_EYE_OUTER: 3,
+  RIGHT_EYE_INNER: 4,
+  RIGHT_EYE: 5,
+  RIGHT_EYE_OUTER: 6,
+  LEFT_EAR: 7,
+  RIGHT_EAR: 8,
+  MOUTH_LEFT: 9,
+  MOUTH_RIGHT: 10,
+  LEFT_SHOULDER: 11,
+  RIGHT_SHOULDER: 12,
+  LEFT_ELBOW: 13,
+  RIGHT_ELBOW: 14,
+  LEFT_WRIST: 15,
+  RIGHT_WRIST: 16,
+  LEFT_PINKY: 17,
+  RIGHT_PINKY: 18,
+  LEFT_INDEX: 19,
+  RIGHT_INDEX: 20,
+  LEFT_THUMB: 21,
+  RIGHT_THUMB: 22,
+  LEFT_HIP: 23,
+  RIGHT_HIP: 24,
+  LEFT_KNEE: 25,
+  RIGHT_KNEE: 26,
+  LEFT_ANKLE: 27,
+  RIGHT_ANKLE: 28,
+  LEFT_HEEL: 29,
+  RIGHT_HEEL: 30,
+  LEFT_FOOT_INDEX: 31,
+  RIGHT_FOOT_INDEX: 32
+};
+
+// Legacy MoveNet keypoint indices (for reference/backward compatibility)
 export const MOVENET_KEYPOINTS = {
   NOSE: 0,
   LEFT_EYE: 1,
@@ -24,29 +62,41 @@ export const MOVENET_KEYPOINTS = {
   RIGHT_ANKLE: 16
 };
 
-// Skeleton connections for visualization
+// Use BlazePose as the primary keypoint system
+export const KEYPOINTS = BLAZEPOSE_KEYPOINTS;
+
+// Skeleton connections for visualization (BlazePose)
 export const SKELETON_CONNECTIONS = {
   linearSprint: [
     // Head
-    [MOVENET_KEYPOINTS.LEFT_EAR, MOVENET_KEYPOINTS.RIGHT_EAR],
+    [KEYPOINTS.LEFT_EAR, KEYPOINTS.RIGHT_EAR],
+    [KEYPOINTS.NOSE, KEYPOINTS.LEFT_EYE],
+    [KEYPOINTS.NOSE, KEYPOINTS.RIGHT_EYE],
     // Shoulders
-    [MOVENET_KEYPOINTS.LEFT_SHOULDER, MOVENET_KEYPOINTS.RIGHT_SHOULDER],
+    [KEYPOINTS.LEFT_SHOULDER, KEYPOINTS.RIGHT_SHOULDER],
     // Left arm
-    [MOVENET_KEYPOINTS.LEFT_SHOULDER, MOVENET_KEYPOINTS.LEFT_ELBOW],
+    [KEYPOINTS.LEFT_SHOULDER, KEYPOINTS.LEFT_ELBOW],
+    [KEYPOINTS.LEFT_ELBOW, KEYPOINTS.LEFT_WRIST],
     // Right arm
-    [MOVENET_KEYPOINTS.RIGHT_SHOULDER, MOVENET_KEYPOINTS.RIGHT_ELBOW],
-    // Torso left
-    [MOVENET_KEYPOINTS.LEFT_SHOULDER, MOVENET_KEYPOINTS.LEFT_HIP],
-    // Torso right
-    [MOVENET_KEYPOINTS.RIGHT_SHOULDER, MOVENET_KEYPOINTS.RIGHT_HIP],
+    [KEYPOINTS.RIGHT_SHOULDER, KEYPOINTS.RIGHT_ELBOW],
+    [KEYPOINTS.RIGHT_ELBOW, KEYPOINTS.RIGHT_WRIST],
+    // Torso
+    [KEYPOINTS.LEFT_SHOULDER, KEYPOINTS.LEFT_HIP],
+    [KEYPOINTS.RIGHT_SHOULDER, KEYPOINTS.RIGHT_HIP],
     // Hips
-    [MOVENET_KEYPOINTS.LEFT_HIP, MOVENET_KEYPOINTS.RIGHT_HIP],
+    [KEYPOINTS.LEFT_HIP, KEYPOINTS.RIGHT_HIP],
     // Left leg
-    [MOVENET_KEYPOINTS.LEFT_HIP, MOVENET_KEYPOINTS.LEFT_KNEE],
-    [MOVENET_KEYPOINTS.LEFT_KNEE, MOVENET_KEYPOINTS.LEFT_ANKLE],
+    [KEYPOINTS.LEFT_HIP, KEYPOINTS.LEFT_KNEE],
+    [KEYPOINTS.LEFT_KNEE, KEYPOINTS.LEFT_ANKLE],
+    [KEYPOINTS.LEFT_ANKLE, KEYPOINTS.LEFT_HEEL],
+    [KEYPOINTS.LEFT_HEEL, KEYPOINTS.LEFT_FOOT_INDEX],
+    [KEYPOINTS.LEFT_ANKLE, KEYPOINTS.LEFT_FOOT_INDEX],
     // Right leg
-    [MOVENET_KEYPOINTS.RIGHT_HIP, MOVENET_KEYPOINTS.RIGHT_KNEE],
-    [MOVENET_KEYPOINTS.RIGHT_KNEE, MOVENET_KEYPOINTS.RIGHT_ANKLE]
+    [KEYPOINTS.RIGHT_HIP, KEYPOINTS.RIGHT_KNEE],
+    [KEYPOINTS.RIGHT_KNEE, KEYPOINTS.RIGHT_ANKLE],
+    [KEYPOINTS.RIGHT_ANKLE, KEYPOINTS.RIGHT_HEEL],
+    [KEYPOINTS.RIGHT_HEEL, KEYPOINTS.RIGHT_FOOT_INDEX],
+    [KEYPOINTS.RIGHT_ANKLE, KEYPOINTS.RIGHT_FOOT_INDEX]
   ]
 };
 
@@ -57,43 +107,58 @@ export const TRACKING_PROFILES = {
     name: 'Linear Sprint',
     description: '40-yard, 10-yard fly, 10m, 60-yard, 100m, etc.',
 
-    // Keypoints to track (MoveNet indices)
+    // Keypoints to track (BlazePose indices)
     keypoints: [
-      MOVENET_KEYPOINTS.LEFT_EAR,
-      MOVENET_KEYPOINTS.RIGHT_EAR,
-      MOVENET_KEYPOINTS.LEFT_SHOULDER,
-      MOVENET_KEYPOINTS.RIGHT_SHOULDER,
-      MOVENET_KEYPOINTS.LEFT_ELBOW,
-      MOVENET_KEYPOINTS.RIGHT_ELBOW,
-      MOVENET_KEYPOINTS.LEFT_HIP,
-      MOVENET_KEYPOINTS.RIGHT_HIP,
-      MOVENET_KEYPOINTS.LEFT_KNEE,
-      MOVENET_KEYPOINTS.RIGHT_KNEE,
-      MOVENET_KEYPOINTS.LEFT_ANKLE,
-      MOVENET_KEYPOINTS.RIGHT_ANKLE
+      KEYPOINTS.NOSE,
+      KEYPOINTS.LEFT_EAR,
+      KEYPOINTS.RIGHT_EAR,
+      KEYPOINTS.LEFT_SHOULDER,
+      KEYPOINTS.RIGHT_SHOULDER,
+      KEYPOINTS.LEFT_ELBOW,
+      KEYPOINTS.RIGHT_ELBOW,
+      KEYPOINTS.LEFT_WRIST,
+      KEYPOINTS.RIGHT_WRIST,
+      KEYPOINTS.LEFT_HIP,
+      KEYPOINTS.RIGHT_HIP,
+      KEYPOINTS.LEFT_KNEE,
+      KEYPOINTS.RIGHT_KNEE,
+      KEYPOINTS.LEFT_ANKLE,
+      KEYPOINTS.RIGHT_ANKLE,
+      KEYPOINTS.LEFT_HEEL,
+      KEYPOINTS.RIGHT_HEEL,
+      KEYPOINTS.LEFT_FOOT_INDEX,
+      KEYPOINTS.RIGHT_FOOT_INDEX
     ],
 
     // Keypoint display names
     keypointNames: {
-      [MOVENET_KEYPOINTS.LEFT_EAR]: 'Left Ear',
-      [MOVENET_KEYPOINTS.RIGHT_EAR]: 'Right Ear',
-      [MOVENET_KEYPOINTS.LEFT_SHOULDER]: 'Left Shoulder',
-      [MOVENET_KEYPOINTS.RIGHT_SHOULDER]: 'Right Shoulder',
-      [MOVENET_KEYPOINTS.LEFT_ELBOW]: 'Left Elbow',
-      [MOVENET_KEYPOINTS.RIGHT_ELBOW]: 'Right Elbow',
-      [MOVENET_KEYPOINTS.LEFT_HIP]: 'Left Hip',
-      [MOVENET_KEYPOINTS.RIGHT_HIP]: 'Right Hip',
-      [MOVENET_KEYPOINTS.LEFT_KNEE]: 'Left Knee',
-      [MOVENET_KEYPOINTS.RIGHT_KNEE]: 'Right Knee',
-      [MOVENET_KEYPOINTS.LEFT_ANKLE]: 'Left Ankle',
-      [MOVENET_KEYPOINTS.RIGHT_ANKLE]: 'Right Ankle'
+      [KEYPOINTS.NOSE]: 'Nose',
+      [KEYPOINTS.LEFT_EAR]: 'Left Ear',
+      [KEYPOINTS.RIGHT_EAR]: 'Right Ear',
+      [KEYPOINTS.LEFT_SHOULDER]: 'Left Shoulder',
+      [KEYPOINTS.RIGHT_SHOULDER]: 'Right Shoulder',
+      [KEYPOINTS.LEFT_ELBOW]: 'Left Elbow',
+      [KEYPOINTS.RIGHT_ELBOW]: 'Right Elbow',
+      [KEYPOINTS.LEFT_WRIST]: 'Left Wrist',
+      [KEYPOINTS.RIGHT_WRIST]: 'Right Wrist',
+      [KEYPOINTS.LEFT_HIP]: 'Left Hip',
+      [KEYPOINTS.RIGHT_HIP]: 'Right Hip',
+      [KEYPOINTS.LEFT_KNEE]: 'Left Knee',
+      [KEYPOINTS.RIGHT_KNEE]: 'Right Knee',
+      [KEYPOINTS.LEFT_ANKLE]: 'Left Ankle',
+      [KEYPOINTS.RIGHT_ANKLE]: 'Right Ankle',
+      [KEYPOINTS.LEFT_HEEL]: 'Left Heel',
+      [KEYPOINTS.RIGHT_HEEL]: 'Right Heel',
+      [KEYPOINTS.LEFT_FOOT_INDEX]: 'Left Toe',
+      [KEYPOINTS.RIGHT_FOOT_INDEX]: 'Right Toe'
     },
 
     // Core metrics (always calculated)
     coreMetrics: ['velocity', 'acceleration', 'centerOfMass'],
 
-    // Biomechanics metrics (optional)
+    // Biomechanics metrics (enabled for linear sprints)
     biomechanicsMetrics: ['spineAngle', 'shinAngle', 'footAngle'],
+    enableBiomechanics: true,
 
     // Default split distances (in yards)
     defaultSplits: [10, 20, 30, 40],
@@ -109,15 +174,63 @@ export const TRACKING_PROFILES = {
   // lateralMovement: { ... }
 };
 
+// Keypoint colors for visualization
+export const KEYPOINT_COLORS = {
+  head: '#fbbf24',      // amber
+  shoulder: '#3b82f6',  // blue
+  elbow: '#22c55e',     // green
+  wrist: '#a855f7',     // purple
+  hip: '#f97316',       // orange
+  knee: '#14b8a6',      // teal
+  ankle: '#ef4444',     // red
+  foot: '#ec4899'       // pink
+};
+
+/**
+ * Get color for a keypoint index
+ */
+export function getKeypointColor(idx) {
+  if ([KEYPOINTS.NOSE, KEYPOINTS.LEFT_EAR, KEYPOINTS.RIGHT_EAR,
+       KEYPOINTS.LEFT_EYE, KEYPOINTS.RIGHT_EYE].includes(idx)) {
+    return KEYPOINT_COLORS.head;
+  }
+  if ([KEYPOINTS.LEFT_SHOULDER, KEYPOINTS.RIGHT_SHOULDER].includes(idx)) {
+    return KEYPOINT_COLORS.shoulder;
+  }
+  if ([KEYPOINTS.LEFT_ELBOW, KEYPOINTS.RIGHT_ELBOW].includes(idx)) {
+    return KEYPOINT_COLORS.elbow;
+  }
+  if ([KEYPOINTS.LEFT_WRIST, KEYPOINTS.RIGHT_WRIST,
+       KEYPOINTS.LEFT_PINKY, KEYPOINTS.RIGHT_PINKY,
+       KEYPOINTS.LEFT_INDEX, KEYPOINTS.RIGHT_INDEX,
+       KEYPOINTS.LEFT_THUMB, KEYPOINTS.RIGHT_THUMB].includes(idx)) {
+    return KEYPOINT_COLORS.wrist;
+  }
+  if ([KEYPOINTS.LEFT_HIP, KEYPOINTS.RIGHT_HIP].includes(idx)) {
+    return KEYPOINT_COLORS.hip;
+  }
+  if ([KEYPOINTS.LEFT_KNEE, KEYPOINTS.RIGHT_KNEE].includes(idx)) {
+    return KEYPOINT_COLORS.knee;
+  }
+  if ([KEYPOINTS.LEFT_ANKLE, KEYPOINTS.RIGHT_ANKLE].includes(idx)) {
+    return KEYPOINT_COLORS.ankle;
+  }
+  if ([KEYPOINTS.LEFT_HEEL, KEYPOINTS.RIGHT_HEEL,
+       KEYPOINTS.LEFT_FOOT_INDEX, KEYPOINTS.RIGHT_FOOT_INDEX].includes(idx)) {
+    return KEYPOINT_COLORS.foot;
+  }
+  return '#ea580c'; // default orange
+}
+
 /**
  * Calculate center of mass from keypoints
  * Uses midpoint of shoulders and hips
  */
 export function calculateCenterOfMass(keypoints) {
-  const leftShoulder = keypoints[MOVENET_KEYPOINTS.LEFT_SHOULDER];
-  const rightShoulder = keypoints[MOVENET_KEYPOINTS.RIGHT_SHOULDER];
-  const leftHip = keypoints[MOVENET_KEYPOINTS.LEFT_HIP];
-  const rightHip = keypoints[MOVENET_KEYPOINTS.RIGHT_HIP];
+  const leftShoulder = keypoints[KEYPOINTS.LEFT_SHOULDER];
+  const rightShoulder = keypoints[KEYPOINTS.RIGHT_SHOULDER];
+  const leftHip = keypoints[KEYPOINTS.LEFT_HIP];
+  const rightHip = keypoints[KEYPOINTS.RIGHT_HIP];
 
   if (!leftShoulder || !rightShoulder || !leftHip || !rightHip) {
     return null;
@@ -145,23 +258,25 @@ export function calculateCenterOfMass(keypoints) {
 }
 
 /**
- * Calculate head position from ears
+ * Calculate head position from ears/nose
  */
 export function calculateHeadPosition(keypoints) {
-  const leftEar = keypoints[MOVENET_KEYPOINTS.LEFT_EAR];
-  const rightEar = keypoints[MOVENET_KEYPOINTS.RIGHT_EAR];
-
-  if (!leftEar || !rightEar) {
-    return null;
-  }
+  const nose = keypoints[KEYPOINTS.NOSE];
+  const leftEar = keypoints[KEYPOINTS.LEFT_EAR];
+  const rightEar = keypoints[KEYPOINTS.RIGHT_EAR];
 
   const minConfidence = 0.3;
-  if (leftEar.score < minConfidence && rightEar.score < minConfidence) {
+
+  // Prefer nose if available
+  if (nose && nose.score >= minConfidence) {
+    return nose;
+  }
+
+  if (!leftEar && !rightEar) {
     return null;
   }
 
-  // Use the ear with higher confidence, or average if both are good
-  if (leftEar.score >= minConfidence && rightEar.score >= minConfidence) {
+  if (leftEar && rightEar && leftEar.score >= minConfidence && rightEar.score >= minConfidence) {
     return {
       x: (leftEar.x + rightEar.x) / 2,
       y: (leftEar.y + rightEar.y) / 2,
@@ -169,7 +284,10 @@ export function calculateHeadPosition(keypoints) {
     };
   }
 
-  return leftEar.score > rightEar.score ? leftEar : rightEar;
+  if (leftEar && leftEar.score >= minConfidence) return leftEar;
+  if (rightEar && rightEar.score >= minConfidence) return rightEar;
+
+  return null;
 }
 
 /**
@@ -177,8 +295,8 @@ export function calculateHeadPosition(keypoints) {
  * Returns 'left' or 'right'
  */
 export function detectLeadLeg(keypoints, movementDirection = 'right') {
-  const leftAnkle = keypoints[MOVENET_KEYPOINTS.LEFT_ANKLE];
-  const rightAnkle = keypoints[MOVENET_KEYPOINTS.RIGHT_ANKLE];
+  const leftAnkle = keypoints[KEYPOINTS.LEFT_ANKLE];
+  const rightAnkle = keypoints[KEYPOINTS.RIGHT_ANKLE];
 
   if (!leftAnkle || !rightAnkle) {
     return null;
@@ -197,8 +315,8 @@ export function detectLeadLeg(keypoints, movementDirection = 'right') {
  */
 export function calculateSpineAngle(keypoints) {
   const head = calculateHeadPosition(keypoints);
-  const leftHip = keypoints[MOVENET_KEYPOINTS.LEFT_HIP];
-  const rightHip = keypoints[MOVENET_KEYPOINTS.RIGHT_HIP];
+  const leftHip = keypoints[KEYPOINTS.LEFT_HIP];
+  const rightHip = keypoints[KEYPOINTS.RIGHT_HIP];
 
   if (!head || !leftHip || !rightHip) {
     return null;
@@ -221,8 +339,8 @@ export function calculateSpineAngle(keypoints) {
  * (0° = vertical, positive = shin angled forward)
  */
 export function calculateShinAngle(keypoints, leadLeg = 'left') {
-  const kneeIdx = leadLeg === 'left' ? MOVENET_KEYPOINTS.LEFT_KNEE : MOVENET_KEYPOINTS.RIGHT_KNEE;
-  const ankleIdx = leadLeg === 'left' ? MOVENET_KEYPOINTS.LEFT_ANKLE : MOVENET_KEYPOINTS.RIGHT_ANKLE;
+  const kneeIdx = leadLeg === 'left' ? KEYPOINTS.LEFT_KNEE : KEYPOINTS.RIGHT_KNEE;
+  const ankleIdx = leadLeg === 'left' ? KEYPOINTS.LEFT_ANKLE : KEYPOINTS.RIGHT_ANKLE;
 
   const knee = keypoints[kneeIdx];
   const ankle = keypoints[ankleIdx];
@@ -245,37 +363,33 @@ export function calculateShinAngle(keypoints, leadLeg = 'left') {
 
 /**
  * Calculate foot angle relative to ground for lead leg
- * Estimated from ankle position and knee trajectory
- * (0° = flat, positive = toe up)
+ * BlazePose provides heel and toe positions for accurate measurement
+ * (0° = flat, positive = toe up/dorsiflexed, negative = toe down/plantarflexed)
  */
 export function calculateFootAngle(keypoints, leadLeg = 'left', prevKeypoints = null) {
-  const kneeIdx = leadLeg === 'left' ? MOVENET_KEYPOINTS.LEFT_KNEE : MOVENET_KEYPOINTS.RIGHT_KNEE;
-  const ankleIdx = leadLeg === 'left' ? MOVENET_KEYPOINTS.LEFT_ANKLE : MOVENET_KEYPOINTS.RIGHT_ANKLE;
+  const heelIdx = leadLeg === 'left' ? KEYPOINTS.LEFT_HEEL : KEYPOINTS.RIGHT_HEEL;
+  const toeIdx = leadLeg === 'left' ? KEYPOINTS.LEFT_FOOT_INDEX : KEYPOINTS.RIGHT_FOOT_INDEX;
 
-  const knee = keypoints[kneeIdx];
-  const ankle = keypoints[ankleIdx];
+  const heel = keypoints[heelIdx];
+  const toe = keypoints[toeIdx];
 
-  if (!knee || !ankle) {
+  if (!heel || !toe) {
     return null;
   }
 
-  // Estimate foot angle from shin angle and ankle velocity
-  // This is an approximation since MoveNet doesn't provide toe position
-  const shinAngle = calculateShinAngle(keypoints, leadLeg);
-
-  if (shinAngle === null) {
+  const minConfidence = 0.3;
+  if (heel.score < minConfidence || toe.score < minConfidence) {
     return null;
   }
 
-  // During ground contact, foot is roughly perpendicular to shin minus ~90°
-  // During flight, foot dorsiflexes (toe up)
-  // We estimate based on shin angle
+  // Calculate angle from horizontal
+  // Positive dx means toe is forward of heel (normal running position)
+  const dx = toe.x - heel.x;
+  const dy = heel.y - toe.y; // Inverted: positive dy means toe is higher
 
-  // If shin is forward (positive angle), foot tends to be dorsiflexed
-  // If shin is vertical or back, foot tends to be plantarflexed
-  const estimatedFootAngle = shinAngle * 0.5; // Rough estimation
-
-  return estimatedFootAngle;
+  // Angle from horizontal (positive = dorsiflexed/toe up)
+  const angleRad = Math.atan2(dy, Math.abs(dx));
+  return angleRad * (180 / Math.PI);
 }
 
 /**

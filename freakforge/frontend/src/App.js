@@ -92,8 +92,10 @@ function App() {
         {/* Charts tab - graphs only, no data cards */}
         {activeTab === 'charts' && <Dashboard mode="charts" />}
 
-        {/* Video Analysis tab */}
-        {activeTab === 'video-analysis' && <VideoAnalysis />}
+        {/* Video Analysis tab - always mounted, hidden when not active to preserve state */}
+        <div style={{ display: activeTab === 'video-analysis' ? 'block' : 'none', height: '100%' }}>
+          <VideoAnalysis />
+        </div>
 
         {activeTab === 'settings' && <Settings />}
 
