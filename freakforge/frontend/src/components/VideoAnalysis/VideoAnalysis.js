@@ -1591,19 +1591,20 @@ function VideoAnalysis() {
 
     const ctx = canvas.getContext('2d');
 
-    // Set canvas dimensions based on whether crop is applied
     const videoW = video.videoWidth || 640;
     const videoH = video.videoHeight || 360;
 
-    let cropX = 0, cropY = 0;
+    // When crop is applied:
+    // - Canvas internal dimensions = cropped region size
+    // - ctx.translate maps full-video keypoint coords to cropped canvas coords
+    let cropOffsetX = 0, cropOffsetY = 0;
     if (isCropApplied && !cropMode) {
-      // Use cropped dimensions for canvas internal size
-      const cropW = (cropBounds.right - cropBounds.left) * videoW;
-      const cropH = (cropBounds.bottom - cropBounds.top) * videoH;
+      const cropW = Math.round((cropBounds.right - cropBounds.left) * videoW);
+      const cropH = Math.round((cropBounds.bottom - cropBounds.top) * videoH);
       canvas.width = cropW;
       canvas.height = cropH;
-      cropX = cropBounds.left * videoW;
-      cropY = cropBounds.top * videoH;
+      cropOffsetX = Math.round(cropBounds.left * videoW);
+      cropOffsetY = Math.round(cropBounds.top * videoH);
     } else {
       canvas.width = videoW;
       canvas.height = videoH;
@@ -1611,7 +1612,7 @@ function VideoAnalysis() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw mode indicators (in canvas coords, before any translate)
+    // Draw mode indicators BEFORE translate (in canvas/cropped coords)
     if (athleteSelectionMode) {
       ctx.fillStyle = 'rgba(251, 191, 36, 0.2)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1630,9 +1631,10 @@ function VideoAnalysis() {
       ctx.fillText('Manual Mode: Click to place center-of-mass', 10, 25);
     }
 
-    // Apply translate for remaining drawings that use full-video coordinates
+    // Apply translate to map full-video coordinates to cropped canvas
+    // All keypoints from poseDetection are in full-video coordinate space
     if (isCropApplied && !cropMode) {
-      ctx.translate(-cropX, -cropY);
+      ctx.translate(-cropOffsetX, -cropOffsetY);
     }
 
     // Draw athlete selection box
@@ -2248,6 +2250,12 @@ function VideoAnalysis() {
                 <span style={{ color: '#78350f' }}>|</span>
                 <span>{fileInfo.fps} fps</span>
               </div>
+              <button
+                onClick={() => { setVideoSource(null); resetAnalysis(); setFileInfo({ name: '', path: '', size: 0, width: 0, height: 0, fps: 30 }); }}
+                style={{ padding: '0.4rem 0.75rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.85rem' }}
+              >
+                Clear Video
+              </button>
             </>
           )}
 
@@ -2299,42 +2307,50 @@ function VideoAnalysis() {
               onMouseUp={handleCanvasMouseUp}
               onMouseLeave={handleCanvasMouseUp}
             >
-              {/* Video element with crop transform when applied */}
-              <video
-                ref={videoRef}
-                src={videoSource}
-                onLoadedMetadata={handleVideoLoad}
-                onTimeUpdate={handleTimeUpdate}
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                style={isCropApplied && !cropMode ? {
-                  // When crop is applied: scale and position to show only cropped region
-                  position: 'absolute',
-                  width: `${100 / (cropBounds.right - cropBounds.left)}%`,
-                  height: `${100 / (cropBounds.bottom - cropBounds.top)}%`,
-                  left: `${-cropBounds.left * 100 / (cropBounds.right - cropBounds.left)}%`,
-                  top: `${-cropBounds.top * 100 / (cropBounds.bottom - cropBounds.top)}%`,
-                  objectFit: 'contain',
-                  pointerEvents: 'none'
-                } : {
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  display: 'block',
-                  pointerEvents: 'none'
-                }}
-              />
-              <canvas
-                ref={canvasRef}
-                style={{
-                  position: 'absolute',
-                  top: `${videoRenderDims.offsetY}px`,
-                  left: `${videoRenderDims.offsetX}px`,
-                  width: videoRenderDims.width ? `${videoRenderDims.width}px` : '100%',
-                  height: videoRenderDims.height ? `${videoRenderDims.height}px` : '100%',
-                  pointerEvents: 'none'
-                }}
-              />
+              {/* Video/Canvas wrapper - positioned at letterbox offset, clips overflow */}
+              <div style={{
+                position: 'absolute',
+                top: `${videoRenderDims.offsetY}px`,
+                left: `${videoRenderDims.offsetX}px`,
+                width: videoRenderDims.width ? `${videoRenderDims.width}px` : '100%',
+                height: videoRenderDims.height ? `${videoRenderDims.height}px` : '100%',
+                overflow: 'hidden'
+              }}>
+                {/* Video - when crop applied, scale up and position to show crop region */}
+                <video
+                  ref={videoRef}
+                  src={videoSource}
+                  onLoadedMetadata={handleVideoLoad}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  style={isCropApplied && !cropMode ? {
+                    position: 'absolute',
+                    width: `${100 / (cropBounds.right - cropBounds.left)}%`,
+                    height: `${100 / (cropBounds.bottom - cropBounds.top)}%`,
+                    left: `${-cropBounds.left * 100 / (cropBounds.right - cropBounds.left)}%`,
+                    top: `${-cropBounds.top * 100 / (cropBounds.bottom - cropBounds.top)}%`,
+                    pointerEvents: 'none'
+                  } : {
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    pointerEvents: 'none'
+                  }}
+                />
+                {/* Canvas - fills wrapper, ctx.translate handles coordinate mapping */}
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    pointerEvents: 'none'
+                  }}
+                />
+              </div>
 
               {/* Crop Overlay UI */}
               {cropMode && videoRenderDims.width > 0 && (
@@ -2575,30 +2591,39 @@ function VideoAnalysis() {
                 {/* Divider */}
                 <div style={{ width: '1px', height: '20px', background: '#78350f', margin: '0 0.25rem' }} />
 
-                {/* Crop controls */}
-                {!cropMode ? (
+                {/* Crop/Trim buttons stacked */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  {!cropMode ? (
+                    <button
+                      onClick={toggleCropMode}
+                      style={{ padding: '0.2rem 0.5rem', background: isCropApplied ? '#166534' : '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem', alignSelf: 'flex-start' }}
+                    >
+                      Crop
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      <button
+                        onClick={applyCrop}
+                        style={{ padding: '0.2rem 0.4rem', background: '#166534', border: '1px solid #22c55e', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem', fontWeight: '600' }}
+                      >
+                        Apply
+                      </button>
+                      <button
+                        onClick={() => setCropMode(false)}
+                        style={{ padding: '0.2rem 0.4rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                   <button
-                    onClick={toggleCropMode}
-                    style={{ padding: '0.3rem 0.6rem', background: isCropApplied ? '#166534' : '#78350f', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
+                    onClick={applyTrim}
+                    disabled={trimStart === 0 && trimEnd === 1}
+                    style={{ padding: '0.2rem 0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: (trimStart === 0 && trimEnd === 1) ? 'not-allowed' : 'pointer', fontSize: '0.7rem', alignSelf: 'flex-start', opacity: (trimStart === 0 && trimEnd === 1) ? 0.4 : 1 }}
                   >
-                    Crop
+                    Trim
                   </button>
-                ) : (
-                  <>
-                    <button
-                      onClick={applyCrop}
-                      style={{ padding: '0.3rem 0.6rem', background: '#166534', border: '1px solid #22c55e', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
-                    >
-                      Apply Crop
-                    </button>
-                    <button
-                      onClick={() => setCropMode(false)}
-                      style={{ padding: '0.3rem 0.6rem', background: '#78350f', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.75rem' }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                )}
+                </div>
 
                 <div style={{ flex: 1, position: 'relative', maxWidth: '60%' }}>
                   {/* Main playback slider container with trim handles */}
@@ -2744,50 +2769,28 @@ function VideoAnalysis() {
                     </div>
                   </div>
 
-                  {/* Trim button and info - inline below slider */}
+                  {/* Trim time range info - inline below slider */}
                   {(trimStart > 0 || trimEnd < 1) && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
                       <span style={{ fontSize: '0.65rem', color: '#a16207' }}>
                         {(trimStart * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s - {(trimEnd * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s
                       </span>
                       <button
-                        onClick={applyTrim}
-                        style={{
-                          padding: '0.15rem 0.4rem',
-                          background: '#ea580c',
-                          border: 'none',
-                          borderRadius: '0.25rem',
-                          color: '#fef3c7',
-                          cursor: 'pointer',
-                          fontSize: '0.65rem',
-                          fontWeight: '500'
-                        }}
-                      >
-                        Trim
-                      </button>
-                      <button
                         onClick={() => { setTrimStart(0); setTrimEnd(1); }}
-                        style={{
-                          padding: '0.15rem 0.3rem',
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#78350f',
-                          cursor: 'pointer',
-                          fontSize: '0.65rem'
-                        }}
+                        style={{ padding: '0.15rem 0.3rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.6rem' }}
                       >
-                        Reset
+                        Clear
                       </button>
                     </div>
                   )}
                 </div>
 
                 {/* Stacked Reset buttons */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginLeft: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginLeft: '0.5rem' }}>
                   {isCropApplied && (
                     <button
                       onClick={resetCrop}
-                      style={{ padding: '0.15rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
+                      style={{ padding: '0.2rem 0.4rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.65rem', whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
                     >
                       Reset Crop
                     </button>
@@ -2795,15 +2798,16 @@ function VideoAnalysis() {
                   {isTrimApplied && (
                     <button
                       onClick={resetTrim}
-                      style={{ padding: '0.15rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
+                      style={{ padding: '0.2rem 0.4rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.65rem', whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
                     >
                       Reset Trim
                     </button>
                   )}
                 </div>
 
-                <div style={{ fontSize: '0.75rem', color: '#a16207', display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }}>
-                  <span style={{ color: '#fbbf24' }}>F{currentFrame}/{totalFrames}</span>
+                {/* Frame/Time/Dur stacked vertically */}
+                <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.7rem', color: '#a16207', marginLeft: 'auto', textAlign: 'right', gap: '0.1rem' }}>
+                  <span>F{currentFrame}/{totalFrames}</span>
                   <span>Time: {currentTime.toFixed(2)}s</span>
                   <span>Dur: {isTrimApplied ? effectiveDuration.toFixed(2) : duration.toFixed(2)}s</span>
                 </div>
@@ -2848,10 +2852,10 @@ function VideoAnalysis() {
                     })}
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.6rem', marginTop: '0.25rem', justifyContent: 'flex-end' }}>
-                    <span style={{ color: '#10b981' }}>* High</span>
-                    <span style={{ color: '#fbbf24' }}>* Med</span>
-                    <span style={{ color: '#f97316' }}>* Low</span>
-                    <span style={{ color: '#ef4444' }}>* Poor</span>
+                    <span style={{ color: '#ef4444' }}>• Poor</span>
+                    <span style={{ color: '#f97316' }}>• Low</span>
+                    <span style={{ color: '#fbbf24' }}>• Med</span>
+                    <span style={{ color: '#10b981' }}>• High</span>
                   </div>
                 </div>
               )}
@@ -2898,36 +2902,31 @@ function VideoAnalysis() {
                 </div>
               </div>
 
-              {/* Athlete Selection + Confidence Threshold side-by-side */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
-                {/* Athlete Selection */}
-                <div>
-                  <label style={{ fontSize: '0.7rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block', lineHeight: '1.2' }}>
-                    Athlete<br/>Selection
-                  </label>
+              {/* Athlete Selection + Confidence Threshold */}
+              <div style={{ paddingTop: '0.5rem', borderTop: '1px solid #78350f' }}>
+                {/* Labels row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                  <label style={{ fontSize: '0.7rem', color: '#fbbf24' }}>Athlete Selection</label>
+                  <label style={{ fontSize: '0.7rem', color: '#fbbf24' }}>Confidence Threshold</label>
+                </div>
+                {/* Controls row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                     <button
                       onClick={() => { setAthleteSelectionMode(true); setSelectedAthleteBox(null); }}
-                      style={{ padding: '0.2rem 0.4rem', background: athleteSelectionMode ? '#fbbf24' : '#78350f', border: 'none', borderRadius: '0.25rem', color: athleteSelectionMode ? '#000' : '#fef3c7', cursor: 'pointer', fontSize: '0.7rem' }}
+                      style={{ padding: '0.25rem 0.5rem', background: athleteSelectionMode ? '#fbbf24' : '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: athleteSelectionMode ? '#000' : '#fef3c7', cursor: 'pointer', fontSize: '0.7rem', alignSelf: 'flex-start' }}
                     >
                       {athleteSelectionMode ? 'Click...' : selectedAthleteBox ? 'Selected' : 'Select'}
                     </button>
                     {selectedAthleteBox && (
                       <button
                         onClick={() => setSelectedAthleteBox(null)}
-                        style={{ padding: '0.2rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem' }}
+                        style={{ padding: '0.25rem 0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.65rem', alignSelf: 'flex-start' }}
                       >
                         Clear
                       </button>
                     )}
                   </div>
-                </div>
-
-                {/* Confidence Threshold */}
-                <div>
-                  <label style={{ fontSize: '0.7rem', color: '#fbbf24', marginBottom: '0.25rem', display: 'block', lineHeight: '1.2' }}>
-                    Confidence<br/>Threshold
-                  </label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                     <input
                       type="range"
@@ -2945,7 +2944,7 @@ function VideoAnalysis() {
             </div>
 
             {/* Calibration Card */}
-            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: isCalibrated ? '4px solid #10b981' : '4px solid #fbbf24' }}>
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: '4px solid #fbbf24' }}>
               <label style={{ fontSize: '0.75rem', color: '#fbbf24', marginBottom: '0.35rem', display: 'block' }}>Calibration</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <input
@@ -2960,7 +2959,7 @@ function VideoAnalysis() {
                 {!isSettingCalibration && !isCalibrated ? (
                   <button
                     onClick={() => { setIsSettingCalibration(true); setCalibrationMarkers([]); }}
-                    style={{ padding: '0.25rem 0.4rem', background: '#78350f', border: '1px solid #fbbf24', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem' }}
+                    style={{ padding: '0.25rem 0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem', alignSelf: 'flex-start' }}
                   >
                     Set
                   </button>
@@ -2968,18 +2967,18 @@ function VideoAnalysis() {
                   <button
                     onClick={() => { calculateCalibration(); setIsSettingCalibration(false); }}
                     disabled={calibrationMarkers.length < 2 || !calibrationDistance}
-                    style={{ padding: '0.25rem 0.4rem', background: calibrationMarkers.length >= 2 && calibrationDistance ? '#10b981' : '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed', fontSize: '0.7rem' }}
+                    style={{ padding: '0.25rem 0.5rem', background: calibrationMarkers.length >= 2 && calibrationDistance ? '#10b981' : '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: calibrationMarkers.length >= 2 && calibrationDistance ? 'pointer' : 'not-allowed', fontSize: '0.7rem' }}
                   >
                     Calibrate
                   </button>
                 ) : (
-                  <span style={{ fontSize: '0.7rem', color: '#10b981' }}>OK {pixelsPerYard?.toFixed(0)} px/yd</span>
+                  <span style={{ fontSize: '0.7rem', color: '#fbbf24' }}>{pixelsPerYard?.toFixed(0)} px/yd</span>
                 )}
 
                 {(isSettingCalibration || isCalibrated) && (
                   <button
                     onClick={() => { setCalibrationMarkers([]); setIsCalibrated(false); setIsSettingCalibration(false); }}
-                    style={{ padding: '0.25rem 0.4rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.7rem' }}
+                    style={{ padding: '0.25rem 0.5rem', background: '#7c2d12', border: '1px solid #dc2626', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.7rem', alignSelf: 'flex-start' }}
                   >
                     Reset
                   </button>
@@ -3004,10 +3003,11 @@ function VideoAnalysis() {
                 color: '#fef3c7',
                 cursor: isCalibrated && poseDetectorReady && !manualTrackingMode ? 'pointer' : 'not-allowed',
                 fontWeight: '500',
-                fontSize: '0.85rem'
+                fontSize: '0.85rem',
+                alignSelf: 'flex-start'
               }}
             >
-              {isProcessing ? 'Cancel' : 'Analyze with AI'}
+              {isProcessing ? 'Cancel' : 'Analyze'}
             </button>
 
             {isProcessing && (
@@ -3021,158 +3021,136 @@ function VideoAnalysis() {
               </div>
             )}
 
-            {/* Manual Tracking Fallback */}
-            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: manualTrackingMode ? '4px solid #fbbf24' : '4px solid #78350f' }}>
-              <h3 style={{ fontSize: '0.85rem', color: '#fbbf24', marginBottom: '0.35rem' }}>Manual Tracking</h3>
-              <p style={{ fontSize: '0.75rem', color: '#78350f', marginBottom: '0.35rem' }}>
-                If AI tracking fails, manually place center-of-mass points
-              </p>
-              <button
-                onClick={() => setManualTrackingMode(!manualTrackingMode)}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  background: manualTrackingMode ? '#fbbf24' : '#78350f',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  color: manualTrackingMode ? '#000' : '#fef3c7',
-                  cursor: 'pointer',
-                  fontWeight: '500'
-                }}
-              >
-                {manualTrackingMode ? 'OK Manual Mode Active' : 'Enable Manual Mode'}
-              </button>
+            {/* Combined Manual Options Card */}
+            <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: '4px solid #fbbf24' }}>
+              {/* Manual Tracking Section */}
+              <div style={{ marginBottom: trackingData.length > 0 ? '0.75rem' : 0, paddingBottom: trackingData.length > 0 ? '0.75rem' : 0, borderBottom: trackingData.length > 0 ? '1px solid #78350f' : 'none' }}>
+                <h3 style={{ fontSize: '0.85rem', color: '#fbbf24', marginBottom: '0.35rem' }}>Manual Tracking</h3>
+                <button
+                  onClick={() => setManualTrackingMode(!manualTrackingMode)}
+                  style={{
+                    padding: '0.3rem 0.6rem',
+                    background: manualTrackingMode ? '#fbbf24' : '#7c2d12',
+                    border: '1px solid #dc2626',
+                    borderRadius: '0.25rem',
+                    color: manualTrackingMode ? '#000' : '#fef3c7',
+                    cursor: 'pointer',
+                    fontWeight: '500',
+                    fontSize: '0.75rem',
+                    alignSelf: 'flex-start'
+                  }}
+                >
+                  {manualTrackingMode ? 'Active' : 'Enable'}
+                </button>
 
-              {manualTrackingMode && (
-                <div style={{ marginTop: '0.75rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#a16207', marginBottom: '0.35rem' }}>
-                    {manualCOMPoints.length} point(s) placed
+                {manualTrackingMode && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#a16207', marginBottom: '0.25rem' }}>
+                      {manualCOMPoints.length} point(s) placed
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={processManualTracking}
+                        disabled={manualCOMPoints.length < 2}
+                        style={{
+                          padding: '0.3rem 0.6rem',
+                          background: manualCOMPoints.length >= 2 ? '#10b981' : '#78350f',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          color: '#fef3c7',
+                          cursor: manualCOMPoints.length >= 2 ? 'pointer' : 'not-allowed',
+                          fontSize: '0.75rem'
+                        }}
+                      >
+                        Calculate
+                      </button>
+                      <button
+                        onClick={() => setManualCOMPoints([])}
+                        style={{
+                          padding: '0.3rem 0.6rem',
+                          background: '#7c2d12',
+                          border: '1px solid #dc2626',
+                          borderRadius: '0.25rem',
+                          color: '#fef3c7',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem'
+                        }}
+                      >
+                        Clear
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      onClick={processManualTracking}
-                      disabled={manualCOMPoints.length < 2}
-                      style={{
-                        flex: 1,
-                        padding: '0.4rem',
-                        background: manualCOMPoints.length >= 2 ? '#10b981' : '#78350f',
-                        border: 'none',
-                        borderRadius: '0.375rem',
-                        color: '#fef3c7',
-                        cursor: manualCOMPoints.length >= 2 ? 'pointer' : 'not-allowed',
-                        fontSize: '0.8rem'
-                      }}
-                    >
-                      Calculate
-                    </button>
-                    <button
-                      onClick={() => setManualCOMPoints([])}
-                      style={{
-                        padding: '0.4rem 0.75rem',
-                        background: '#78350f',
-                        border: 'none',
-                        borderRadius: '0.375rem',
-                        color: '#fef3c7',
-                        cursor: 'pointer',
-                        fontSize: '0.8rem'
-                      }}
-                    >
-                      Clear
-                    </button>
+                )}
+              </div>
+
+              {/* Manual Timing Section - only show when tracking data exists */}
+              {trackingData.length > 0 && (
+                <div>
+                  <div
+                    onClick={() => setShowTimeOverrides(!showTimeOverrides)}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                  >
+                    <h3 style={{ fontSize: '0.85rem', color: '#fbbf24' }}>Manual Timing</h3>
+                    <span style={{ color: '#78350f' }}>{showTimeOverrides ? '−' : '+'}</span>
                   </div>
-                  <p style={{ fontSize: '0.65rem', color: '#78350f', marginTop: '0.5rem' }}>
-                    Tip: Step through frames, click to place points at start, key frames, and end
-                  </p>
+
+                  {showTimeOverrides && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                        <div>
+                          <label style={{ fontSize: '0.7rem', color: '#a16207' }}>Start (s)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={timeOverrides.startTime ?? ''}
+                            onChange={(e) => updateTimeOverride('startTime', e.target.value)}
+                            placeholder="Auto"
+                            style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.7rem', color: '#a16207' }}>End (s)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={timeOverrides.endTime ?? ''}
+                            onChange={(e) => updateTimeOverride('endTime', e.target.value)}
+                            placeholder="Auto"
+                            style={{ width: '100%', padding: '0.35rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#a16207' }}>Split Times</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.35rem', marginTop: '0.25rem' }}>
+                          {[10, 20, 30, 40].map(dist => (
+                            <div key={dist}>
+                              <label style={{ fontSize: '0.6rem', color: '#78350f' }}>{dist}yd</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={timeOverrides.splits[dist] ?? ''}
+                                onChange={(e) => updateTimeOverride(`split-${dist}`, e.target.value)}
+                                placeholder="Auto"
+                                style={{ width: '100%', padding: '0.25rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.75rem' }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={recalculateWithOverrides}
+                        style={{ marginTop: '0.5rem', padding: '0.35rem 0.75rem', background: '#fbbf24', border: 'none', borderRadius: '0.25rem', color: '#000000', cursor: 'pointer', fontWeight: '600', fontSize: '0.75rem' }}
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-
-            {/* Time Overrides */}
-            {trackingData.length > 0 && (
-              <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem', borderLeft: '4px solid #fbbf24' }}>
-                <div
-                  onClick={() => setShowTimeOverrides(!showTimeOverrides)}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-                >
-                  <h3 style={{ fontSize: '0.85rem', color: '#fbbf24' }}>Time Overrides (Field Measured)</h3>
-                  <span style={{ color: '#78350f' }}>{showTimeOverrides ? '-' : '+'}</span>
-                </div>
-
-                {showTimeOverrides && (
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <p style={{ fontSize: '0.75rem', color: '#78350f', marginBottom: '0.75rem' }}>
-                      Enter field-measured times to override video-calculated values. Physics will rescale accordingly.
-                    </p>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                      <div>
-                        <label style={{ fontSize: '0.75rem', color: '#a16207' }}>Start (s)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={timeOverrides.startTime ?? ''}
-                          onChange={(e) => updateTimeOverride('startTime', e.target.value)}
-                          placeholder="Auto"
-                          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.85rem' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: '0.75rem', color: '#a16207' }}>End (s)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={timeOverrides.endTime ?? ''}
-                          onChange={(e) => updateTimeOverride('endTime', e.target.value)}
-                          placeholder="Auto"
-                          style={{ width: '100%', padding: '0.4rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.85rem' }}
-                        />
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: '0.5rem' }}>
-                      <label style={{ fontSize: '0.75rem', color: '#a16207' }}>Split Times</label>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginTop: '0.25rem' }}>
-                        {[10, 20, 30, 40].map(dist => (
-                          <div key={dist}>
-                            <label style={{ fontSize: '0.65rem', color: '#78350f' }}>{dist}yd</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={timeOverrides.splits[dist] ?? ''}
-                              onChange={(e) => updateTimeOverride(`split-${dist}`, e.target.value)}
-                              placeholder="Auto"
-                              style={{ width: '100%', padding: '0.3rem', background: '#0f172a', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', fontSize: '0.8rem' }}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={recalculateWithOverrides}
-                      style={{ marginTop: '0.75rem', width: '100%', padding: '0.5rem', background: '#fbbf24', border: 'none', borderRadius: '0.375rem', color: '#000000', cursor: 'pointer', fontWeight: '600' }}
-                    >
-                      Apply Overrides
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Manual Keyframe Adjustment Info */}
-            {trackingData.length > 0 && (
-              <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '0.375rem' }}>
-                <h3 style={{ fontSize: '0.85rem', color: '#a16207', marginBottom: '0.35rem' }}>Manual Adjustment</h3>
-                <p style={{ fontSize: '0.75rem', color: '#78350f' }}>
-                  Click any keypoint on the skeleton to select it, then click on the video to reposition. Frames between manual keyframes will interpolate.
-                </p>
-                {manualKeyframes.length > 0 && (
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#fbbf24' }}>
-                    {manualKeyframes.length} manual keyframe(s) set
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
       </div>
