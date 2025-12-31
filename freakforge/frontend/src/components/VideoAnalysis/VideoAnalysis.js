@@ -26,6 +26,56 @@ import {
 
 Chart.register(...registerables);
 
+// Custom Chart.js plugin for time indicator line and dot
+const timeIndicatorPlugin = {
+  id: 'timeIndicator',
+  afterDraw: (chart, args, options) => {
+    if (!options.currentTime || !options.duration) return;
+
+    const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+    const xPos = left + (options.currentTime / options.duration) * (right - left);
+
+    // Don't draw if outside chart area
+    if (xPos < left || xPos > right) return;
+
+    // Draw vertical line
+    ctx.save();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(xPos, top);
+    ctx.lineTo(xPos, bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Find the Y value at current time from dataset
+    const dataset = chart.data.datasets[0];
+    if (dataset && dataset.data.length > 0) {
+      const dataIndex = Math.round((options.currentTime / options.duration) * (dataset.data.length - 1));
+      const clampedIndex = Math.max(0, Math.min(dataset.data.length - 1, dataIndex));
+      const yValue = dataset.data[clampedIndex];
+
+      if (yValue !== undefined && yValue !== null) {
+        const yPos = y.getPixelForValue(yValue);
+
+        // Draw dot on the line
+        ctx.beginPath();
+        ctx.arc(xPos, yPos, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+};
+
+Chart.register(timeIndicatorPlugin);
+
 const ATHLETE_COLORS = [
   { bg: 'rgba(239, 68, 68, 0.2)', border: 'rgba(239, 68, 68, 1)', point: 'rgba(239, 68, 68, 1)', name: 'Red' },
   { bg: 'rgba(59, 130, 246, 0.2)', border: 'rgba(59, 130, 246, 1)', point: 'rgba(59, 130, 246, 1)', name: 'Blue' },
@@ -635,8 +685,16 @@ function VideoAnalysis() {
     const videoWidth = video.videoWidth || 640;
     const videoHeight = video.videoHeight || 360;
 
+    // When crop is applied, use cropped dimensions for aspect ratio calculation
+    let effectiveWidth = videoWidth;
+    let effectiveHeight = videoHeight;
+    if (isCropApplied && !cropMode) {
+      effectiveWidth = (cropBounds.right - cropBounds.left) * videoWidth;
+      effectiveHeight = (cropBounds.bottom - cropBounds.top) * videoHeight;
+    }
+
     const containerAspect = containerRect.width / containerRect.height;
-    const videoAspect = videoWidth / videoHeight;
+    const videoAspect = effectiveWidth / effectiveHeight;
 
     let renderWidth, renderHeight, offsetX, offsetY;
 
@@ -655,7 +713,7 @@ function VideoAnalysis() {
     }
 
     setVideoRenderDims({ width: renderWidth, height: renderHeight, offsetX, offsetY });
-  }, []);
+  }, [isCropApplied, cropMode, cropBounds]);
 
   // Trim slider handlers
   const handleTrimDragStart = (handle, e) => {
@@ -1038,10 +1096,10 @@ function VideoAnalysis() {
     setTimeout(updateVideoRenderDims, 50);
   }, [updateVideoRenderDims]);
 
-  // Update video render dims when container size or video changes
+  // Update video render dims when container size, video, or crop changes
   useEffect(() => {
     updateVideoRenderDims();
-  }, [videoContainerHeight, videoSource, updateVideoRenderDims]);
+  }, [videoContainerHeight, videoSource, isCropApplied, updateVideoRenderDims]);
 
   // Also update on window resize
   useEffect(() => {
@@ -1101,9 +1159,16 @@ function VideoAnalysis() {
     let { offsetX, offsetY, width: renderWidth, height: renderHeight } = videoRenderDims;
 
     if (!renderWidth || !renderHeight) {
-      // Calculate render dimensions
+      // Calculate render dimensions - account for crop if applied
+      let effectiveWidth = videoWidth;
+      let effectiveHeight = videoHeight;
+      if (isCropApplied && !cropMode) {
+        effectiveWidth = (cropBounds.right - cropBounds.left) * videoWidth;
+        effectiveHeight = (cropBounds.bottom - cropBounds.top) * videoHeight;
+      }
+
       const containerAspect = containerRect.width / containerRect.height;
-      const videoAspect = videoWidth / videoHeight;
+      const videoAspect = effectiveWidth / effectiveHeight;
 
       if (containerAspect > videoAspect) {
         renderHeight = containerRect.height;
@@ -1129,8 +1194,19 @@ function VideoAnalysis() {
     }
 
     // Convert to video pixel coordinates
-    const x = ((clickX - offsetX) / renderWidth) * videoWidth;
-    const y = ((clickY - offsetY) / renderHeight) * videoHeight;
+    // When crop is applied, map clicks to the cropped region
+    let x, y;
+    if (isCropApplied && !cropMode) {
+      // Map click to 0-1 within visible area
+      const normalizedX = (clickX - offsetX) / renderWidth;
+      const normalizedY = (clickY - offsetY) / renderHeight;
+      // Map to cropped region in original video coordinates
+      x = (cropBounds.left + normalizedX * (cropBounds.right - cropBounds.left)) * videoWidth;
+      y = (cropBounds.top + normalizedY * (cropBounds.bottom - cropBounds.top)) * videoHeight;
+    } else {
+      x = ((clickX - offsetX) / renderWidth) * videoWidth;
+      y = ((clickY - offsetY) / renderHeight) * videoHeight;
+    }
 
     // Handle athlete selection mode (for crowded scenes)
     if (athleteSelectionMode) {
@@ -1214,8 +1290,16 @@ function VideoAnalysis() {
     let { offsetX, offsetY, width: renderWidth, height: renderHeight } = videoRenderDims;
 
     if (!renderWidth || !renderHeight) {
+      // Account for crop if applied
+      let effectiveWidth = videoWidth;
+      let effectiveHeight = videoHeight;
+      if (isCropApplied && !cropMode) {
+        effectiveWidth = (cropBounds.right - cropBounds.left) * videoWidth;
+        effectiveHeight = (cropBounds.bottom - cropBounds.top) * videoHeight;
+      }
+
       const containerAspect = containerRect.width / containerRect.height;
-      const videoAspect = videoWidth / videoHeight;
+      const videoAspect = effectiveWidth / effectiveHeight;
 
       if (containerAspect > videoAspect) {
         renderHeight = containerRect.height;
@@ -1233,8 +1317,17 @@ function VideoAnalysis() {
     const clickX = e.clientX - containerRect.left;
     const clickY = e.clientY - containerRect.top;
 
-    const x = ((clickX - offsetX) / renderWidth) * videoWidth;
-    const y = ((clickY - offsetY) / renderHeight) * videoHeight;
+    // Convert to video pixel coordinates, accounting for crop
+    let x, y;
+    if (isCropApplied && !cropMode) {
+      const normalizedX = (clickX - offsetX) / renderWidth;
+      const normalizedY = (clickY - offsetY) / renderHeight;
+      x = (cropBounds.left + normalizedX * (cropBounds.right - cropBounds.left)) * videoWidth;
+      y = (cropBounds.top + normalizedY * (cropBounds.bottom - cropBounds.top)) * videoHeight;
+    } else {
+      x = ((clickX - offsetX) / renderWidth) * videoWidth;
+      y = ((clickY - offsetY) / renderHeight) * videoHeight;
+    }
 
     setCalibrationMarkers(prev => {
       const updated = [...prev];
@@ -1497,12 +1590,28 @@ function VideoAnalysis() {
     if (!canvas || !video) return;
 
     const ctx = canvas.getContext('2d');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 360;
+
+    // Set canvas dimensions based on whether crop is applied
+    const videoW = video.videoWidth || 640;
+    const videoH = video.videoHeight || 360;
+
+    let cropX = 0, cropY = 0;
+    if (isCropApplied && !cropMode) {
+      // Use cropped dimensions for canvas internal size
+      const cropW = (cropBounds.right - cropBounds.left) * videoW;
+      const cropH = (cropBounds.bottom - cropBounds.top) * videoH;
+      canvas.width = cropW;
+      canvas.height = cropH;
+      cropX = cropBounds.left * videoW;
+      cropY = cropBounds.top * videoH;
+    } else {
+      canvas.width = videoW;
+      canvas.height = videoH;
+    }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw mode indicator
+    // Draw mode indicators (in canvas coords, before any translate)
     if (athleteSelectionMode) {
       ctx.fillStyle = 'rgba(251, 191, 36, 0.2)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1519,6 +1628,11 @@ function VideoAnalysis() {
       ctx.font = 'bold 14px sans-serif';
       ctx.fillStyle = '#fb923c';
       ctx.fillText('Manual Mode: Click to place center-of-mass', 10, 25);
+    }
+
+    // Apply translate for remaining drawings that use full-video coordinates
+    if (isCropApplied && !cropMode) {
+      ctx.translate(-cropX, -cropY);
     }
 
     // Draw athlete selection box
@@ -1709,7 +1823,7 @@ function VideoAnalysis() {
       if (manualKeyframes.includes(currentFrame)) {
         ctx.font = 'bold 12px sans-serif';
         ctx.fillStyle = '#fbbf24';
-        ctx.fillText('⚡ KEYFRAME', 10, 20);
+        ctx.fillText('* KEYFRAME', 10, 20);
       }
 
       // Draw biomechanics angles if enabled
@@ -1721,19 +1835,19 @@ function VideoAnalysis() {
         ctx.fillStyle = '#fb923c';
 
         if (bio.spineAngle !== null) {
-          ctx.fillText(`Spine: ${bio.spineAngle.toFixed(1)}°`, 10, yOffset);
+          ctx.fillText(`Spine: ${bio.spineAngle.toFixed(1)} deg`, 10, yOffset);
           yOffset += 15;
         }
         if (bio.shinAngle !== null) {
-          ctx.fillText(`Shin (${bio.leadLeg}): ${bio.shinAngle.toFixed(1)}°`, 10, yOffset);
+          ctx.fillText(`Shin (${bio.leadLeg}): ${bio.shinAngle.toFixed(1)} deg`, 10, yOffset);
           yOffset += 15;
         }
         if (bio.footAngle !== null) {
-          ctx.fillText(`Foot: ${bio.footAngle.toFixed(1)}°`, 10, yOffset);
+          ctx.fillText(`Foot: ${bio.footAngle.toFixed(1)} deg`, 10, yOffset);
         }
       }
     }
-  }, [calibrationMarkers, calibrationMode, currentFrame, trackingData, selectedKeypoint, manualKeyframes, enableBiomechanics, activeProfile, athleteSelectionMode, selectedAthleteBox, manualTrackingMode, manualCOMPoints, confidenceThreshold]);
+  }, [calibrationMarkers, calibrationMode, currentFrame, trackingData, selectedKeypoint, manualKeyframes, enableBiomechanics, activeProfile, athleteSelectionMode, selectedAthleteBox, manualTrackingMode, manualCOMPoints, confidenceThreshold, isCropApplied, cropMode, cropBounds]);
 
   // Update overlay when frame changes
   useEffect(() => {
@@ -1753,6 +1867,22 @@ function VideoAnalysis() {
   }, [videoRenderDims]);
 
   // ============ CHARTS ============
+
+  // Helper to handle chart click for video scrubbing
+  const handleChartClick = useCallback((chart, event) => {
+    if (!chart || !analysisResults) return;
+
+    const rect = chart.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const chartArea = chart.chartArea;
+
+    if (x >= chartArea.left && x <= chartArea.right) {
+      const percent = (x - chartArea.left) / (chartArea.right - chartArea.left);
+      const newTime = percent * effectiveDuration;
+      const newFrame = Math.floor(newTime * fps);
+      seekToFrame(Math.max(0, Math.min(totalFrames - 1, newFrame)));
+    }
+  }, [analysisResults, effectiveDuration, fps, totalFrames, seekToFrame]);
 
   useEffect(() => {
     if (!analysisResults || activeResultTab !== 'speed' || !speedChartRef.current) return;
@@ -1780,7 +1910,11 @@ function VideoAnalysis() {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false }
+          legend: { display: false },
+          timeIndicator: {
+            currentTime: currentTime,
+            duration: effectiveDuration
+          }
         },
         scales: {
           x: {
@@ -1794,7 +1928,8 @@ function VideoAnalysis() {
             grid: { color: '#78350f' },
             beginAtZero: true
           }
-        }
+        },
+        onClick: (event, elements, chart) => handleChartClick(chart, event.native)
       }
     });
   }, [analysisResults, activeResultTab]);
@@ -1825,7 +1960,11 @@ function VideoAnalysis() {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false }
+          legend: { display: false },
+          timeIndicator: {
+            currentTime: currentTime,
+            duration: effectiveDuration
+          }
         },
         scales: {
           x: {
@@ -1838,7 +1977,8 @@ function VideoAnalysis() {
             ticks: { color: '#a16207' },
             grid: { color: '#78350f' }
           }
-        }
+        },
+        onClick: (event, elements, chart) => handleChartClick(chart, event.native)
       }
     });
   }, [analysisResults, activeResultTab]);
@@ -1869,7 +2009,11 @@ function VideoAnalysis() {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false }
+          legend: { display: false },
+          timeIndicator: {
+            currentTime: currentTime,
+            duration: effectiveDuration
+          }
         },
         scales: {
           x: {
@@ -1883,7 +2027,8 @@ function VideoAnalysis() {
             grid: { color: '#78350f' },
             beginAtZero: true
           }
-        }
+        },
+        onClick: (event, elements, chart) => handleChartClick(chart, event.native)
       }
     });
   }, [analysisResults, activeResultTab]);
@@ -1902,7 +2047,7 @@ function VideoAnalysis() {
       data: {
         labels: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.time.toFixed(2)),
         datasets: [{
-          label: 'Spine Angle (°)',
+          label: 'Spine Angle ( deg)',
           data: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.spineAngle),
           borderColor: '#fb923c',
           backgroundColor: 'rgba(167, 139, 250, 0.1)',
@@ -1925,7 +2070,7 @@ function VideoAnalysis() {
             grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Angle (°)', color: '#a16207' },
+            title: { display: true, text: 'Angle ( deg)', color: '#a16207' },
             ticks: { color: '#a16207' },
             grid: { color: '#78350f' }
           }
@@ -1948,7 +2093,7 @@ function VideoAnalysis() {
         labels: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.time.toFixed(2)),
         datasets: [
           {
-            label: 'Shin Angle (°)',
+            label: 'Shin Angle ( deg)',
             data: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.shinAngle),
             borderColor: '#f97316',
             backgroundColor: 'rgba(249, 115, 22, 0.1)',
@@ -1957,7 +2102,7 @@ function VideoAnalysis() {
             pointRadius: 0
           },
           {
-            label: 'Foot Angle (°)',
+            label: 'Foot Angle ( deg)',
             data: biomechanicsResults.filter((_, i) => i % 2 === 0).map(f => f.footAngle),
             borderColor: '#10b981',
             backgroundColor: 'rgba(34, 197, 94, 0.1)',
@@ -1981,7 +2126,7 @@ function VideoAnalysis() {
             grid: { color: '#78350f' }
           },
           y: {
-            title: { display: true, text: 'Angle (°)', color: '#a16207' },
+            title: { display: true, text: 'Angle ( deg)', color: '#a16207' },
             ticks: { color: '#a16207' },
             grid: { color: '#78350f' }
           }
@@ -1989,6 +2134,26 @@ function VideoAnalysis() {
       }
     });
   }, [biomechanicsResults, activeResultTab]);
+
+  // Update time indicator on charts when video time changes
+  useEffect(() => {
+    const updateTimeIndicator = (chartInstance) => {
+      if (!chartInstance) return;
+      chartInstance.options.plugins.timeIndicator = {
+        currentTime: currentTime,
+        duration: effectiveDuration
+      };
+      chartInstance.update('none'); // 'none' prevents animation
+    };
+
+    if (activeResultTab === 'speed') {
+      updateTimeIndicator(speedChartInstance.current);
+    } else if (activeResultTab === 'acceleration') {
+      updateTimeIndicator(accelChartInstance.current);
+    } else if (activeResultTab === 'power') {
+      updateTimeIndicator(powerChartInstance.current);
+    }
+  }, [currentTime, effectiveDuration, activeResultTab]);
 
   // ============ SAVE TO ATHLETE ============
 
@@ -2061,27 +2226,29 @@ function VideoAnalysis() {
 
           {/* File info display */}
           {videoSource && fileInfo.name && (
-            <div style={{
-              flex: 1,
-              padding: '0.35rem 0.5rem',
-              background: '#0f172a',
-              border: '1px solid #78350f',
-              borderRadius: '0.25rem',
-              color: '#a16207',
-              fontSize: '0.75rem',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              minWidth: '150px'
-            }}>
-              <span style={{ color: '#fbbf24' }}>{fileInfo.name}</span>
-              <span style={{ marginLeft: '0.5rem', color: '#78350f' }}>|</span>
-              <span style={{ marginLeft: '0.5rem' }}>{formatFileSize(fileInfo.size)}</span>
-              <span style={{ marginLeft: '0.5rem', color: '#78350f' }}>|</span>
-              <span style={{ marginLeft: '0.5rem' }}>{getResolutionLabel(fileInfo.width, fileInfo.height)}</span>
-              <span style={{ marginLeft: '0.5rem', color: '#78350f' }}>|</span>
-              <span style={{ marginLeft: '0.5rem' }}>{fileInfo.fps} fps</span>
-            </div>
+            <>
+              <div style={{
+                padding: '0.35rem 0.5rem',
+                background: '#0f172a',
+                border: '1px solid #78350f',
+                borderRadius: '0.25rem',
+                color: '#fbbf24',
+                fontSize: '0.75rem',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: '300px'
+              }}>
+                {fileInfo.path || fileInfo.name}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: '#a16207' }}>
+                <span>{formatFileSize(fileInfo.size)}</span>
+                <span style={{ color: '#78350f' }}>|</span>
+                <span>{getResolutionLabel(fileInfo.width, fileInfo.height)}</span>
+                <span style={{ color: '#78350f' }}>|</span>
+                <span>{fileInfo.fps} fps</span>
+              </div>
+            </>
           )}
 
           {/* AI Status indicator - inline */}
@@ -2363,23 +2530,6 @@ function VideoAnalysis() {
                   </div>
                 </div>
               )}
-
-              {/* Crop applied indicator */}
-              {isCropApplied && !cropMode && (
-                <div style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  background: 'rgba(16, 185, 129, 0.9)',
-                  color: '#fff',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  fontSize: '0.65rem',
-                  fontWeight: '500'
-                }}>
-                  CROPPED
-                </div>
-              )}
             </div>
 
             {/* Resize Handle */}
@@ -2431,7 +2581,7 @@ function VideoAnalysis() {
                     onClick={toggleCropMode}
                     style={{ padding: '0.3rem 0.6rem', background: isCropApplied ? '#166534' : '#78350f', border: '1px solid #78350f', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontSize: '0.75rem' }}
                   >
-                    {isCropApplied ? 'Re-Crop' : 'Crop'}
+                    Crop
                   </button>
                 ) : (
                   <>
@@ -2448,14 +2598,6 @@ function VideoAnalysis() {
                       Cancel
                     </button>
                   </>
-                )}
-                {isCropApplied && !cropMode && (
-                  <button
-                    onClick={resetCrop}
-                    style={{ padding: '0.3rem 0.5rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.7rem' }}
-                  >
-                    Reset Crop
-                  </button>
                 )}
 
                 <div style={{ flex: 1, position: 'relative', maxWidth: '60%' }}>
@@ -2606,7 +2748,7 @@ function VideoAnalysis() {
                   {(trimStart > 0 || trimEnd < 1) && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
                       <span style={{ fontSize: '0.65rem', color: '#a16207' }}>
-                        {(trimStart * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s — {(trimEnd * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s
+                        {(trimStart * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s - {(trimEnd * (isTrimApplied ? effectiveDuration : duration)).toFixed(2)}s
                       </span>
                       <button
                         onClick={applyTrim}
@@ -2640,21 +2782,30 @@ function VideoAnalysis() {
                   )}
                 </div>
 
-                <div style={{ fontSize: '0.75rem', color: '#a16207', display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }}>
-                  <span style={{ color: '#fbbf24' }}>F{currentFrame}/{totalFrames}</span>
-                  <span>Time: {currentTime.toFixed(2)}s</span>
-                  <span>Dur: {isTrimApplied ? effectiveDuration.toFixed(2) : duration.toFixed(2)}s</span>
+                {/* Stacked Reset buttons */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginLeft: '0.5rem' }}>
                   {isCropApplied && (
-                    <span style={{ color: '#10b981' }}>Crop: {Math.round((cropBounds.right - cropBounds.left) * 100)}%</span>
+                    <button
+                      onClick={resetCrop}
+                      style={{ padding: '0.15rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
+                    >
+                      Reset Crop
+                    </button>
                   )}
                   {isTrimApplied && (
                     <button
                       onClick={resetTrim}
-                      style={{ padding: '0.15rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem' }}
+                      style={{ padding: '0.15rem 0.35rem', background: '#78350f', border: 'none', borderRadius: '0.25rem', color: '#fbbf24', cursor: 'pointer', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
                     >
                       Reset Trim
                     </button>
                   )}
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: '#a16207', display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }}>
+                  <span style={{ color: '#fbbf24' }}>F{currentFrame}/{totalFrames}</span>
+                  <span>Time: {currentTime.toFixed(2)}s</span>
+                  <span>Dur: {isTrimApplied ? effectiveDuration.toFixed(2) : duration.toFixed(2)}s</span>
                 </div>
               </div>
 
@@ -2697,10 +2848,10 @@ function VideoAnalysis() {
                     })}
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.6rem', marginTop: '0.25rem', justifyContent: 'flex-end' }}>
-                    <span style={{ color: '#10b981' }}>● High</span>
-                    <span style={{ color: '#fbbf24' }}>● Med</span>
-                    <span style={{ color: '#f97316' }}>● Low</span>
-                    <span style={{ color: '#ef4444' }}>● Poor</span>
+                    <span style={{ color: '#10b981' }}>* High</span>
+                    <span style={{ color: '#fbbf24' }}>* Med</span>
+                    <span style={{ color: '#f97316' }}>* Low</span>
+                    <span style={{ color: '#ef4444' }}>* Poor</span>
                   </div>
                 </div>
               )}
@@ -2822,7 +2973,7 @@ function VideoAnalysis() {
                     Calibrate
                   </button>
                 ) : (
-                  <span style={{ fontSize: '0.7rem', color: '#10b981' }}>✓ {pixelsPerYard?.toFixed(0)} px/yd</span>
+                  <span style={{ fontSize: '0.7rem', color: '#10b981' }}>OK {pixelsPerYard?.toFixed(0)} px/yd</span>
                 )}
 
                 {(isSettingCalibration || isCalibrated) && (
@@ -2889,7 +3040,7 @@ function VideoAnalysis() {
                   fontWeight: '500'
                 }}
               >
-                {manualTrackingMode ? '✓ Manual Mode Active' : 'Enable Manual Mode'}
+                {manualTrackingMode ? 'OK Manual Mode Active' : 'Enable Manual Mode'}
               </button>
 
               {manualTrackingMode && (
@@ -2944,7 +3095,7 @@ function VideoAnalysis() {
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
                 >
                   <h3 style={{ fontSize: '0.85rem', color: '#fbbf24' }}>Time Overrides (Field Measured)</h3>
-                  <span style={{ color: '#78350f' }}>{showTimeOverrides ? '−' : '+'}</span>
+                  <span style={{ color: '#78350f' }}>{showTimeOverrides ? '-' : '+'}</span>
                 </div>
 
                 {showTimeOverrides && (
@@ -3027,29 +3178,10 @@ function VideoAnalysis() {
       </div>
 
       {/* Results Section - Always visible with placeholders */}
-      <div style={{ marginTop: '0.75rem', marginBottom: '1rem', background: '#1e293b', padding: '0.5rem', borderRadius: '0.25rem', borderLeft: analysisResults ? '3px solid #fb923c' : '3px solid #78350f' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-          <h3 style={{ fontSize: '0.85rem', color: analysisResults ? '#fb923c' : '#78350f' }}>Results</h3>
-
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {analysisResults?.hasTimeOverrides && (
-              <span style={{ fontSize: '0.65rem', background: '#fbbf24', color: '#000', padding: '0.15rem 0.35rem', borderRadius: '0.2rem' }}>
-                Field Times
-              </span>
-            )}
-            {primaryAthlete && analysisResults && (
-              <button
-                onClick={saveToAthlete}
-                style={{ padding: '0.25rem 0.5rem', background: '#10b981', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.65rem' }}
-              >
-                Save to {new Date().toISOString().split('T')[0]} {primaryAthlete.lastName}_{primaryAthlete.firstName}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Result Tabs */}
-        <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+      <div style={{ marginTop: '0.25rem', marginBottom: '0.5rem', background: '#1e293b', padding: '0.35rem 0.5rem', borderRadius: '0.25rem', borderLeft: analysisResults ? '3px solid #fb923c' : '3px solid #78350f' }}>
+        {/* Results label + Tabs + Save button on same row */}
+        <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.35rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.85rem', color: analysisResults ? '#fb923c' : '#78350f', fontWeight: '600', marginRight: '0.25rem' }}>Results</span>
           {['summary', 'speed', 'acceleration', 'power', ...(enableBiomechanics && biomechanicsResults ? ['biomechanics'] : []), 'data'].map(tab => (
             <button
               key={tab}
@@ -3070,6 +3202,21 @@ function VideoAnalysis() {
               {tab}
             </button>
           ))}
+          {/* Spacer to push save button right */}
+          <div style={{ flex: 1 }} />
+          {analysisResults?.hasTimeOverrides && (
+            <span style={{ fontSize: '0.65rem', background: '#fbbf24', color: '#000', padding: '0.15rem 0.35rem', borderRadius: '0.2rem' }}>
+              Field Times
+            </span>
+          )}
+          {primaryAthlete && analysisResults && (
+            <button
+              onClick={saveToAthlete}
+              style={{ padding: '0.25rem 0.5rem', background: '#10b981', border: 'none', borderRadius: '0.25rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '500', fontSize: '0.65rem' }}
+            >
+              Save to {primaryAthlete.lastName}_{primaryAthlete.firstName}
+            </button>
+          )}
         </div>
 
         {/* Summary Tab */}
@@ -3128,7 +3275,7 @@ function VideoAnalysis() {
         {activeResultTab === 'speed' && (
           <div style={{ height: '200px' }}>
             {analysisResults ? (
-              <canvas ref={speedChartRef} />
+              <canvas ref={speedChartRef} style={{ cursor: 'pointer' }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
                 Analyze video to see speed graph
@@ -3141,7 +3288,7 @@ function VideoAnalysis() {
         {activeResultTab === 'acceleration' && (
           <div style={{ height: '200px' }}>
             {analysisResults ? (
-              <canvas ref={accelChartRef} />
+              <canvas ref={accelChartRef} style={{ cursor: 'pointer' }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
                 Analyze video to see acceleration graph
@@ -3154,7 +3301,7 @@ function VideoAnalysis() {
         {activeResultTab === 'power' && (
           <div style={{ height: '200px' }}>
             {analysisResults && getEffectiveWeight() ? (
-              <canvas ref={powerChartRef} />
+              <canvas ref={powerChartRef} style={{ cursor: 'pointer' }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#78350f', fontSize: '0.8rem' }}>
                 {analysisResults ? 'Select athlete or enter weight for power' : 'Analyze video to see power graph'}
@@ -3244,12 +3391,12 @@ function VideoAnalysis() {
                 onClick={startRecording}
                 style={{ padding: '1rem 2rem', background: '#7c2d12', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600', fontSize: '1.1rem' }}
               >
-                ● Start Recording
+                * Start Recording
               </button>
             ) : (
               <>
                 <div style={{ color: '#dc2626', fontWeight: 'bold', fontSize: '1.5rem' }}>
-                  ● {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                  * {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
                 </div>
                 <button
                   onClick={stopRecording}
@@ -3283,7 +3430,7 @@ function VideoAnalysis() {
               onClick={useRecordedVideo}
               style={{ padding: '0.75rem 1.5rem', background: '#10b981', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600' }}
             >
-              ✓ Use for Analysis
+              OK Use for Analysis
             </button>
             <button
               onClick={saveRecordedVideo}
@@ -3295,7 +3442,7 @@ function VideoAnalysis() {
               onClick={discardRecordedVideo}
               style={{ padding: '0.75rem 1.5rem', background: '#7c2d12', border: 'none', borderRadius: '0.5rem', color: '#fef3c7', cursor: 'pointer', fontWeight: '600' }}
             >
-              ✕ Discard
+              X Discard
             </button>
           </div>
         </div>
